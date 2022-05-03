@@ -1,7 +1,5 @@
 # AutoShortcut
 
-[简体中文](README.md) [English](README.md)
-
 ## 介绍
 
 `AutoShortcut` 是用于自动创建软件快捷方式的工具。
@@ -18,7 +16,7 @@
 
 ### 配置文件有什么用？
 
-为了更有效的创建快捷方式，可选引入配置文件。配置文件包括以下功能：
+为了更有效的创建快捷方式，**可选**引入配置文件。配置文件包括以下功能：
 
 - 为未创建快捷方式的程序匹配创建快捷方式;
 - 为创建的快捷方式指定别名;
@@ -76,7 +74,8 @@
 
 - 创建桌面快捷方式: `AutoShortcut.exe "C:\Program Files" %Desktop%`
 - 创建开始菜单快捷方式: `AutoShortcut.exe "C:\Program Files" "%Programs%"`
-- 创建程序文件夹: `AutoShortcut.exe "C:\Program Files" "%Programs%"` -c
+- 创建程序文件夹: `AutoShortcut.exe -c "C:\Program Files" "%Programs%"`
+- 创建快捷方式时尝试安装软件: `AutoShortcut.exe -i "C:\Program Files" "%Programs%"`
 
 ### 指定配置文件
 
@@ -84,7 +83,7 @@
 
 - `AutoShortcut.exe "C:\Program Files" %Desktop% D:\config.json`
 
-D:\config.json
+D:\config.json:
 
 ```json
 {
