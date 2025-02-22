@@ -20,6 +20,8 @@ pub struct LnkInfo {
     name: String,
     /// 快捷方式别名
     alia: String,
+    /// 图标
+    icon: String,
     /// 命令行参数
     cmdline: String,
 }
