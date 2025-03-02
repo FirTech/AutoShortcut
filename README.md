@@ -58,7 +58,9 @@
 
 ```json
 {
+  "searchDepth": 2,
   "ignore": ["忽略目录", "忽略文件.exe"],
+  "scripts": ["setup.cmd","*install*.cmd"],
   "lnkInfo": [
     {
       "name": "程序名.exe",

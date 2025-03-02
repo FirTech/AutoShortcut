@@ -4,11 +4,13 @@ use std::io::Read;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::collections::HashSet;
 use clap::{Parser};
 use walkdir::WalkDir;
 use anyhow::Result;
 
 use crate::{ConfigInfo, ConsoleType, createShortcut, writeConsole};
+use crate::utils::matches_glob;
 
 #[derive(Parser, Debug)]
 #[clap(version)]
@@ -60,6 +62,9 @@ pub fn AutoShortcut(targetPath: &Path, lnkPath: &Path, configPath: Option<PathBu
     let mut folder_count = 0;
     let mut lnk_count = 0;
 
+    // 已处理目录集合
+    let mut processed_dirs = HashSet::new();
+
     // 读取配置文件信息
     let mut configInfo = None;
     if let Some(config) = configPath {
@@ -93,9 +98,17 @@ pub fn AutoShortcut(targetPath: &Path, lnkPath: &Path, configPath: Option<PathBu
         createShortcut(&program, &*shortcutFile, cmdline, icon).ok();
     }
 
+    // 获取搜索深度
+    let search_depth = configInfo.as_ref().map(|c| { if c.searchDepth == 0 {2}  else {c.searchDepth} }).unwrap_or(2);
+
     // 遍历指定目录的子目录
-    for rootPath in WalkDir::new(targetPath).max_depth(2).into_iter().skip(1).filter_map(|e| e.ok())
-        .filter(|file| file.path().is_dir()) {
+    for rootPath in WalkDir::new(targetPath).max_depth(search_depth).into_iter().skip(1).filter_map(|e| e.ok()).filter(|file| file.path().is_dir()) {
+
+        // 检查是否已处理该目录
+        if processed_dirs.contains(rootPath.path().parent().unwrap()) {
+            continue;
+        }
+
         folder_count += 1; // 统计遍历的文件夹
 
         // 排除 有文件夹但无文件 的目录
@@ -121,12 +134,29 @@ pub fn AutoShortcut(targetPath: &Path, lnkPath: &Path, configPath: Option<PathBu
         }
 
         // 尝试安装软件
-        if install {
+        if install  {
             for installScript in WalkDir::new(&rootPath.path()).max_depth(1).into_iter().filter_map(|e| e.ok())
-                .filter(|file| file.file_name().to_str().unwrap() == "setup.cmd" || file.file_name().to_str().unwrap() == "setup.bat" || file.file_name().to_str().unwrap() == "install.cmd" || file.file_name().to_str().unwrap() == "install.bat") {
-                writeConsole(ConsoleType::Info, &format!("Install Script: {}", installScript.path().to_str().unwrap()));
-                Command::new(installScript.path()).creation_flags(0x08000000)
-                    .output().ok();
+                .filter(|file|file.path().is_file()){
+                let mut matched = false;
+                let filename = installScript.file_name().to_str().unwrap().to_lowercase();
+
+                // 通配符匹配逻辑
+                if let Some(configInfo) = &configInfo {
+                    if !configInfo.scripts.is_empty() {
+                        matched = configInfo.scripts.iter().any(|rule| matches_glob(rule, &*filename));
+                    }
+                }
+
+                // 默认脚本规则
+                if filename.contains("setup.cmd")  || filename.contains("setup.bat") || filename.contains("install.cmd") || filename.contains("install.bat") {
+                    matched = true;
+                }
+                if matched {
+                    writeConsole(ConsoleType::Info, &format!("Install Script: {}", installScript.path().to_str().unwrap()));
+                    Command::new(installScript.path()).creation_flags(0x08000000)
+                        .current_dir(installScript.path().parent().unwrap_or_else(|| Path::new(".")))
+                        .output().ok();
+                }
             }
         }
 
@@ -158,7 +188,7 @@ pub fn AutoShortcut(targetPath: &Path, lnkPath: &Path, configPath: Option<PathBu
         }
         // 绿色软件
         let getMainProgram = || {
-            // 判断特定规则
+            // 1.判断特定规则
             if let Some(configInfo) = &configInfo {
                 for item in configInfo.lnkInfo.iter() {
                     let filePath = rootPath.path().join(&item.name);
@@ -169,15 +199,19 @@ pub fn AutoShortcut(targetPath: &Path, lnkPath: &Path, configPath: Option<PathBu
                 }
             }
 
-            // 判断程序名是否包含目录名
-            let rootPathName = rootPath.path().file_name().unwrap().to_str().unwrap();
+            // 2.判断程序名是否包含目录名(转小写+移除空格+去符号)
+            let rootPathName = rootPath.path().file_name().unwrap().to_str().unwrap()
+                .to_lowercase().replace(" ", "").replace("-", "").replace("_", "");
             for exeFile in totalExeFiles.iter() {
-                if rootPathName.contains(exeFile.file_stem().unwrap().to_str().unwrap()) {
+                let exeStem = exeFile.file_stem().unwrap().to_str().unwrap().to_lowercase()
+                    .replace(" ", "").replace("-", "").replace("_", "");
+                // 双向包含检测：目录名包含程序名 或 程序名包含目录名
+                if rootPathName.contains(&exeStem) || exeStem.contains(&rootPathName) {
                     return exeFile.to_path_buf();
                 }
             }
 
-            // 程序大小最大的即为主程序
+            // 3.程序大小最大的即为主程序
             totalExeFiles.iter().max_by(|x, y| x.metadata().unwrap().len().cmp(&y.metadata().unwrap().len())).unwrap().to_path_buf()
         };
         let mainProgram = getMainProgram();
@@ -188,8 +222,12 @@ pub fn AutoShortcut(targetPath: &Path, lnkPath: &Path, configPath: Option<PathBu
         let icon = getLnkIcon(&configInfo, &mainProgram);
 
         lnk_count += 1;
-        writeConsole(ConsoleType::Info, &format!("Create Shortcut: {}", mainProgram.to_str().unwrap()));
 
+        // 标记父目录已处理
+        processed_dirs.insert(mainProgram.parent().unwrap().to_path_buf());
+
+        // 创建快捷方式
+        writeConsole(ConsoleType::Info, &format!("Create Shortcut: {}", mainProgram.to_str().unwrap()));
         if createdir {
             let parentPath = lnkPath.join(mainProgram.parent().unwrap().file_stem().unwrap());
             fs::create_dir_all(&parentPath).ok();
@@ -237,7 +275,10 @@ fn getLnkAlia(configInfo: &Option<ConfigInfo>, program: &Path) -> String {
     if let Some(configInfo) = &configInfo {
         for item in configInfo.lnkInfo.iter() {
             if item.name == program.file_name().unwrap().to_str().unwrap() {
-                return (*item.alia).to_string();
+                if item.alia.is_empty() {
+                    return program.file_stem().unwrap().to_str().unwrap().to_string();
+                }
+                return item.alia.clone();
             }
         }
     }
@@ -249,6 +290,9 @@ fn getLnkCmdline(configInfo: &Option<ConfigInfo>, program: &Path) -> Option<Stri
     if let Some(configInfo) = &configInfo {
         for item in configInfo.lnkInfo.iter() {
             if item.name == program.file_name()?.to_str()? {
+                if item.cmdline.is_empty() {
+                    return None;
+                }
                 return Some((*item.cmdline).to_string());
             }
         }
