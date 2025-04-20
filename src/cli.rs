@@ -61,6 +61,7 @@ pub fn AutoShortcut(targetPath: &Path, lnkPath: &Path, configPath: Option<PathBu
     // 初始化统计计数器
     let mut folder_count = 0;
     let mut lnk_count = 0;
+    let start_time = std::time::Instant::now();
 
     // 已处理目录集合
     let mut processed_dirs = HashSet::new();
@@ -84,7 +85,7 @@ pub fn AutoShortcut(targetPath: &Path, lnkPath: &Path, configPath: Option<PathBu
 
     // 遍历指定目录的程序
     for rootPath in WalkDir::new(targetPath).max_depth(1).into_iter().skip(1).filter_map(|e| e.ok())
-        .filter(|file| file.path().is_file() && file.path().extension().unwrap_or_default() == "exe") {
+        .filter(|file| file.path().is_file() && file.path().extension().unwrap_or_default().to_ascii_lowercase() == "exe") {
         let program = rootPath.path();
 
         // 处理快捷方式信息
@@ -126,7 +127,7 @@ pub fn AutoShortcut(targetPath: &Path, lnkPath: &Path, configPath: Option<PathBu
 
         // 枚举根目录的所有exe文件
         let totalExeFiles: Vec<PathBuf> = WalkDir::new(&rootPath.path()).into_iter().filter_map(|e| e.ok())
-            .filter(|file| file.path().is_file() && file.path().extension().unwrap_or_default() == "exe")
+            .filter(|file| file.path().is_file() && file.path().extension().unwrap_or_default().to_ascii_lowercase() == "exe")
             .filter(|file| if configInfo.is_none() { true } else { &configInfo.as_ref().unwrap().ignore.iter().filter(|&item| file.file_name().to_str().unwrap().contains(item)).count() == &0 })
             .map(|file| file.into_path()).collect();
         if totalExeFiles.len() == 0 {
@@ -148,7 +149,7 @@ pub fn AutoShortcut(targetPath: &Path, lnkPath: &Path, configPath: Option<PathBu
                 }
 
                 // 默认脚本规则
-                if filename.contains("setup.cmd")  || filename.contains("setup.bat") || filename.contains("install.cmd") || filename.contains("install.bat") {
+                if filename.to_ascii_lowercase().contains("setup.cmd")  || filename.to_ascii_lowercase().contains("setup.bat") || filename.to_ascii_lowercase().contains("install.cmd") || filename.to_ascii_lowercase().contains("install.bat") {
                     matched = true;
                 }
                 if matched {
@@ -162,8 +163,8 @@ pub fn AutoShortcut(targetPath: &Path, lnkPath: &Path, configPath: Option<PathBu
 
         // 判断根目录是否存在除exe文件以外的文件（判断绿色软件/单文件程序）
         let otherFiles = WalkDir::new(&rootPath.path()).into_iter().filter_map(|e| e.ok())
-            .filter(|file| file.path().is_file() && file.path().extension().unwrap_or_default() != "exe")
-            .filter(|file| file.path().is_file() && file.path().extension().unwrap_or_default() != "ico");
+            .filter(|file| file.path().is_file() && file.path().extension().unwrap_or_default().to_ascii_lowercase() != "exe")
+            .filter(|file| file.path().is_file() && file.path().extension().unwrap_or_default().to_ascii_lowercase() != "ico");
         if otherFiles.count() == 0 {
             // 单文件程序
             for program in totalExeFiles {
@@ -238,13 +239,25 @@ pub fn AutoShortcut(targetPath: &Path, lnkPath: &Path, configPath: Option<PathBu
             createShortcut(&mainProgram, &shortcutFile, cmdline, icon).ok();
         }
     }
-    writeConsole(
-        ConsoleType::Success,
-        &format!(
-            "Operation completed, Folders scanned: {}, Shortcuts created: {}.",
-            folder_count, lnk_count
-        )
-    );
+
+    let duration = start_time.elapsed().as_secs_f32();
+    if lnk_count == 0 {
+        writeConsole(
+            ConsoleType::Error,
+            &format!(
+                "No shortcuts created, Time: {:.2}s, Subfolders scanned: {}, Shortcuts created: {}.",
+                duration, folder_count, lnk_count
+            )
+        );
+    } else {
+        writeConsole(
+            ConsoleType::Success,
+            &format!(
+                "Operation completed, Time: {:.2}s, Subfolders scanned: {}, Shortcuts created: {}.",
+                duration, folder_count, lnk_count
+            )
+        );
+    }
 }
 
 /// 解析配置文件
