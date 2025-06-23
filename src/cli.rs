@@ -28,11 +28,14 @@ struct Cli {
     /// 安装程序脚本
     #[clap(short, long)]
     install: bool,
+    /// 仅列出程序路径（不创建快捷方式）
+    #[clap(short = 'l', long)]
+    list: bool,
 }
 
 pub fn cli() {
     let cli: Cli = Cli::parse();
-    AutoShortcut(&*cli.targetPath, &*processEnv(&cli.lnkPath), cli.configPath, cli.createdir, cli.install);
+    AutoShortcut(&*cli.targetPath, &*processEnv(&cli.lnkPath), cli.configPath, cli.createdir, cli.install, cli.list);
 }
 
 /// 处理特殊环境变量
@@ -57,7 +60,12 @@ pub fn processEnv(path: &Path) -> PathBuf {
 }
 
 /// 自动创建快捷方式
-pub fn AutoShortcut(targetPath: &Path, lnkPath: &Path, configPath: Option<PathBuf>, createdir: bool, install: bool) {
+///
+/// 参数
+/// - `targetPath`: 程序路径
+/// - `lnkPath`: 快捷方式路径
+/// - `configPath`: 配置文件路径
+pub fn AutoShortcut(targetPath: &Path, lnkPath: &Path, configPath: Option<PathBuf>, createdir: bool, install: bool, list_mode: bool) {
     // 初始化统计计数器
     let mut folder_count = 0;
     let mut lnk_count = 0;
@@ -94,9 +102,13 @@ pub fn AutoShortcut(targetPath: &Path, lnkPath: &Path, configPath: Option<PathBu
         let icon = getLnkIcon(&configInfo, &program);
 
         lnk_count += 1;
-        writeConsole(ConsoleType::Info, &format!("Create Shortcut: {}", program.to_str().unwrap()));
-        let shortcutFile = lnkPath.join(format!("{}.lnk", lnkName));
-        createShortcut(&program, &*shortcutFile, cmdline, icon).ok();
+        if list_mode {
+            println!("{}", program.to_str().unwrap());
+        } else {
+            writeConsole(ConsoleType::Info, &format!("Create Shortcut: {}", program.to_str().unwrap()));
+            let shortcutFile = lnkPath.join(format!("{}.lnk", lnkName));
+            createShortcut(&program, &*shortcutFile, cmdline, icon).ok();
+        }
     }
 
     // 获取搜索深度
@@ -174,15 +186,19 @@ pub fn AutoShortcut(targetPath: &Path, lnkPath: &Path, configPath: Option<PathBu
                 let icon = getLnkIcon(&configInfo, &program);
 
                 lnk_count += 1;
-                writeConsole(ConsoleType::Info, &format!("Create Shortcut: {}", program.to_str().unwrap()));
-                if createdir {
-                    let parentPath = lnkPath.join(program.parent().unwrap().file_stem().unwrap());
-                    fs::create_dir_all(&parentPath).ok();
-                    let shortcutFile = parentPath.join(format!("{}.lnk", lnkName));
-                    createShortcut(&program, &shortcutFile, cmdline, icon).ok();
+                if list_mode {
+                    println!("{}", program.to_str().unwrap());
                 } else {
-                    let shortcutFile = lnkPath.join(format!("{}.lnk", lnkName));
-                    createShortcut(&program, &*shortcutFile, cmdline, icon).ok();
+                    writeConsole(ConsoleType::Info, &format!("Create Shortcut: {}", program.to_str().unwrap()));
+                    if createdir {
+                        let parentPath = lnkPath.join(program.parent().unwrap().file_stem().unwrap());
+                        fs::create_dir_all(&parentPath).ok();
+                        let shortcutFile = parentPath.join(format!("{}.lnk", lnkName));
+                        createShortcut(&program, &shortcutFile, cmdline, icon).ok();
+                    } else {
+                        let shortcutFile = lnkPath.join(format!("{}.lnk", lnkName));
+                        createShortcut(&program, &*shortcutFile, cmdline, icon).ok();
+                    }
                 }
             }
             continue;
@@ -228,16 +244,24 @@ pub fn AutoShortcut(targetPath: &Path, lnkPath: &Path, configPath: Option<PathBu
         processed_dirs.insert(mainProgram.parent().unwrap().to_path_buf());
 
         // 创建快捷方式
-        writeConsole(ConsoleType::Info, &format!("Create Shortcut: {}", mainProgram.to_str().unwrap()));
-        if createdir {
-            let parentPath = lnkPath.join(mainProgram.parent().unwrap().file_stem().unwrap());
-            fs::create_dir_all(&parentPath).ok();
-            let shortcutFile = parentPath.join(format!("{}.lnk", lnkName));
-            createShortcut(&mainProgram, &shortcutFile, cmdline, icon).ok();
+        if list_mode {
+            println!("{}", mainProgram.to_str().unwrap());
         } else {
-            let shortcutFile = lnkPath.join(format!("{}.lnk", lnkName));
-            createShortcut(&mainProgram, &shortcutFile, cmdline, icon).ok();
+            writeConsole(ConsoleType::Info, &format!("Create Shortcut: {}", mainProgram.to_str().unwrap()));
+            if createdir {
+                let parentPath = lnkPath.join(mainProgram.parent().unwrap().file_stem().unwrap());
+                fs::create_dir_all(&parentPath).ok();
+                let shortcutFile = parentPath.join(format!("{}.lnk", lnkName));
+                createShortcut(&mainProgram, &shortcutFile, cmdline, icon).ok();
+            } else {
+                let shortcutFile = lnkPath.join(format!("{}.lnk", lnkName));
+                createShortcut(&mainProgram, &shortcutFile, cmdline, icon).ok();
+            }
         }
+    }
+
+    if list_mode {
+        return;
     }
 
     let duration = start_time.elapsed().as_secs_f32();
