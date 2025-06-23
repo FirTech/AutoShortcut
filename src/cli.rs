@@ -17,19 +17,25 @@ use crate::utils::matches_glob;
 #[clap(propagate_version = true)]
 struct Cli {
     /// 程序目录
+    #[clap(help="Program Path")]
     targetPath: PathBuf,
-    /// 图标路径
+    /// 快捷方式路径
+    #[clap(help="Shortcut Path")]
     lnkPath: PathBuf,
     /// 配置文件路径
+    #[clap(help="Config Path")]
     configPath: Option<PathBuf>,
     /// 是否建立目录
+    #[clap(help="Create a directory")]
     #[clap(short, long)]
     createdir: bool,
     /// 安装程序脚本
+    #[clap(help="Install program script")]
     #[clap(short, long)]
     install: bool,
     /// 仅列出程序路径（不创建快捷方式）
-    #[clap(short = 'l', long)]
+    #[clap(help="Only list program path")]
+    #[clap(short, long)]
     list: bool,
 }
 
