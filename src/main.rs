@@ -9,19 +9,21 @@ mod cli;
 mod config;
 
 use std::collections::HashSet;
-use std::{env, fs};
+use std::{fs};
+use std::error::Error;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use clap::Parser;
 use walkdir::WalkDir;
 use crate::console::{ConsoleType, write_console};
-use crate::utils::{create_shortcut, matches_glob};
-use crate::config::ConfigInfo;
+use crate::utils::{create_shortcut, matches_glob, process_env};
+use crate::config::{ConfigInfo, LnkInfo};
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     let cli = crate::cli::Cli::parse();
-    auto_shortcut(&cli.targetPath, &process_env(&cli.lnkPath), cli.configPath, cli.createdir, cli.install, cli.list);
+    auto_shortcut(&cli.targetPath, &process_env(&cli.lnkPath), cli.configPath, cli.createdir, cli.install, cli.list)?;
+    Ok(())
 }
 
 /// 自动创建快捷方式
@@ -30,7 +32,12 @@ fn main() {
 /// - `targetPath`: 程序路径
 /// - `lnkPath`: 快捷方式路径
 /// - `configPath`: 配置文件路径
-pub fn auto_shortcut(target_path: &Path, lnk_path: &Path, config_path: Option<PathBuf>, createdir: bool, install: bool, list_mode: bool) {
+/// - `createdir`: 是否创建目录
+///
+/// 返回
+/// - `Ok(())`: 创建成功
+/// - `Err(...)`：失败则返回错误
+pub fn auto_shortcut(target_path: &Path, lnk_path: &Path, config_path: Option<PathBuf>, createdir: bool, install: bool, list_mode: bool) -> Result<(), Box<dyn Error>> {
     // 初始化统计计数器
     let mut folder_count = 0;
     let mut lnk_count = 0;
@@ -47,33 +54,36 @@ pub fn auto_shortcut(target_path: &Path, lnk_path: &Path, config_path: Option<Pa
                 config_info = Some(config);
             } else {
                 write_console(ConsoleType::Error, "Configuration file parsing failed");
-                return;
+                return Err("Configuration file parsing failed".into());
             }
         } else {
-            write_console(ConsoleType::Error, "config file does not exist");
-            return;
+            write_console(ConsoleType::Error, "Config file does not exist");
+            return Err("Config file does not exist".into());
         }
     }
 
-
-    // 遍历指定目录的程序
+    // 场景: 遍历根目录中的程序（不包括子目录）
     for root_path in WalkDir::new(target_path).max_depth(1).into_iter().skip(1).filter_map(|e| e.ok())
         .filter(|file| file.path().is_file() && file.path().extension().unwrap_or_default().to_ascii_lowercase() == "exe") {
         let program = root_path.path();
 
-        // 处理快捷方式信息
-        let lnk_name = get_lnk_alia(&config_info, &program);
-        let cmdline = get_lnk_cmdline(&config_info, &program);
-        let icon = get_lnk_icon(&config_info, &program);
-
-        lnk_count += 1;
+        // 列出快捷方式
         if list_mode {
             println!("{}", program.to_str().unwrap());
-        } else {
-            write_console(ConsoleType::Info, &format!("Create Shortcut: {}", program.to_str().unwrap()));
-            let shortcut_file = lnk_path.join(format!("{}.lnk", lnk_name));
-            create_shortcut(&program, &shortcut_file, cmdline, icon).ok();
+            continue;
         }
+
+        lnk_count += 1;
+        write_console(ConsoleType::Info, &format!("Create Shortcut: {}", program.to_str().unwrap()));
+
+        // 创建快捷方式
+        let lnk_info = if let Some(config_info) = &config_info {
+            LnkInfo::get_lnk_info(&config_info.lnkInfo, &*program)
+        } else {
+            None
+        };
+        let parent_path = lnk_path.join(program.parent().unwrap().file_stem().unwrap());
+        create_program_shortcut(&*program, if createdir { &parent_path } else { lnk_path }, &lnk_info)?;
     }
 
     // 获取搜索深度
@@ -89,13 +99,13 @@ pub fn auto_shortcut(target_path: &Path, lnk_path: &Path, config_path: Option<Pa
 
         folder_count += 1; // 统计遍历的文件夹
 
-        // 排除 有文件夹但无文件 的目录
+        // 排除目录: 有文件夹但无文件
         if WalkDir::new(root_path.path()).max_depth(1).into_iter().filter_map(|e| e.ok())
             .filter(|file| file.path().is_file()).count() == 0 {
             continue;
         }
 
-        // 判断是否为自定义排除目录
+        // 排除目录: 自定义排除
         if let Some(config_info) = &config_info {
             if config_info.ignore.iter().filter(|&item| root_path.path().to_str().unwrap().contains(item)).count() > 0 {
                 continue;
@@ -111,7 +121,7 @@ pub fn auto_shortcut(target_path: &Path, lnk_path: &Path, config_path: Option<Pa
             continue;
         }
 
-        // 尝试安装软件
+        // 安装软件
         if install  {
             for install_script in WalkDir::new(&root_path.path()).max_depth(1).into_iter().filter_map(|e| e.ok())
                 .filter(|file|file.path().is_file()){
@@ -145,29 +155,27 @@ pub fn auto_shortcut(target_path: &Path, lnk_path: &Path, config_path: Option<Pa
         if other_files.count() == 0 {
             // 单文件程序
             for program in total_exe_files {
-                // 处理快捷方式信息
-                let lnk_name = get_lnk_alia(&config_info, &program);
-                let cmdline = get_lnk_cmdline(&config_info, &program);
-                let icon = get_lnk_icon(&config_info, &program);
-
-                lnk_count += 1;
+                // 列出快捷方式
                 if list_mode {
                     println!("{}", program.to_str().unwrap());
-                } else {
-                    write_console(ConsoleType::Info, &format!("Create Shortcut: {}", program.to_str().unwrap()));
-                    if createdir {
-                        let parent_path = lnk_path.join(program.parent().unwrap().file_stem().unwrap());
-                        fs::create_dir_all(&parent_path).ok();
-                        let shortcut_file = parent_path.join(format!("{}.lnk", lnk_name));
-                        create_shortcut(&program, &shortcut_file, cmdline, icon).ok();
-                    } else {
-                        let shortcut_file = lnk_path.join(format!("{}.lnk", lnk_name));
-                        create_shortcut(&program, &shortcut_file, cmdline, icon).ok();
-                    }
+                    continue;
                 }
+
+                lnk_count += 1;
+                write_console(ConsoleType::Info, &format!("Create Shortcut: {}", program.to_str().unwrap()));
+
+                // 创建快捷方式（单文件）
+                let lnk_info = if let Some(config_info) = &config_info {
+                    LnkInfo::get_lnk_info(&config_info.lnkInfo, &*program)
+                } else {
+                    None
+                };
+                let parent_path = lnk_path.join(program.parent().unwrap().file_stem().unwrap());
+                create_program_shortcut(&*program, if createdir { &parent_path } else { lnk_path }, &lnk_info)?;
             }
             continue;
         }
+        
         // 绿色软件
         let get_main_program = || {
             // 1.判断特定规则
@@ -196,132 +204,125 @@ pub fn auto_shortcut(target_path: &Path, lnk_path: &Path, config_path: Option<Pa
             // 3.程序大小最大的即为主程序
             total_exe_files.iter().max_by(|x, y| x.metadata().unwrap().len().cmp(&y.metadata().unwrap().len())).unwrap().to_path_buf()
         };
-        let main_program = get_main_program();
+        let program = get_main_program();
 
-        // 处理快捷方式信息
-        let lnk_name = get_lnk_alia(&config_info, &main_program);
-        let cmdline = get_lnk_cmdline(&config_info, &main_program);
-        let icon = get_lnk_icon(&config_info, &main_program);
-
-        lnk_count += 1;
+        // 列出快捷方式
+        if list_mode {
+            println!("{}", program.to_str().unwrap());
+            continue;
+        }
 
         // 标记父目录已处理
-        processed_dirs.insert(main_program.parent().unwrap().to_path_buf());
+        processed_dirs.insert(program.parent().unwrap().to_path_buf());
+
+        lnk_count += 1;
+        write_console(ConsoleType::Info, &format!("Create Shortcut: {}", program.to_str().unwrap()));
 
         // 创建快捷方式
-        if list_mode {
-            println!("{}", main_program.to_str().unwrap());
+        let lnk_info = if let Some(config_info) = &config_info {
+            LnkInfo::get_lnk_info(&config_info.lnkInfo, &*program)
         } else {
-            write_console(ConsoleType::Info, &format!("Create Shortcut: {}", main_program.to_str().unwrap()));
-            if createdir {
-                let parent_path = lnk_path.join(main_program.parent().unwrap().file_stem().unwrap());
-                fs::create_dir_all(&parent_path).ok();
-                let shortcut_file = parent_path.join(format!("{}.lnk", lnk_name));
-                create_shortcut(&main_program, &shortcut_file, cmdline, icon).ok();
-            } else {
-                let shortcut_file = lnk_path.join(format!("{}.lnk", lnk_name));
-                create_shortcut(&main_program, &shortcut_file, cmdline, icon).ok();
-            }
-        }
+            None
+        };
+        let parent_path = lnk_path.join(program.parent().unwrap().file_stem().unwrap());
+        create_program_shortcut(&*program, if createdir { &parent_path } else { lnk_path }, &lnk_info)?;
     }
 
     if list_mode {
-        return;
+        return Ok(());
     }
 
     let duration = start_time.elapsed().as_secs_f32();
     if lnk_count == 0 {
-        write_console(
-            ConsoleType::Error,
-            &format!(
-                "No shortcuts created, Time: {:.2}s, Subfolders scanned: {}, Shortcuts created: {}.",
-                duration, folder_count, lnk_count
-            )
-        );
+        write_console(ConsoleType::Error, &format!("No shortcuts created, Time: {:.2}s, Subfolders scanned: {}, Shortcuts created: {}.", duration, folder_count, lnk_count));
     } else {
-        write_console(
-            ConsoleType::Success,
-            &format!(
-                "Operation completed, Time: {:.2}s, Subfolders scanned: {}, Shortcuts created: {}.",
-                duration, folder_count, lnk_count
-            )
-        );
+        write_console(ConsoleType::Success, &format!("Operation completed, Time: {:.2}s, Subfolders scanned: {}, Shortcuts created: {}.", duration, folder_count, lnk_count));
     }
+
+    Ok(())
 }
 
-/// 处理特殊环境变量
-pub fn process_env(path: &Path) -> PathBuf {
-    let mut output = path.display().to_string().to_lowercase();
-    // 处理 %Desktop% 和 %Programs%
-    if let Ok(user_profile) = env::var("USERPROFILE") {
-        let desktop = PathBuf::from(&user_profile).join("Desktop");
-        output = output.replace("%desktop%", &desktop.to_string_lossy());
-
-        let programs = PathBuf::from(&user_profile).join("AppData/Roaming/Microsoft/Windows/Start Menu/Programs");
-        output = output.replace("%programs%", &programs.to_string_lossy());
-    }
-
-    // 处理系统环境变量（如 %APPDATA%）
-    for (key, value) in env::vars() {
-        let placeholder = format!("%{}%", key.to_lowercase());
-        output = output.replace(&placeholder, &value);
-    }
-
-    PathBuf::from(output)
-}
-
-/// 获取快捷方式别名
-fn get_lnk_alia(config_info: &Option<ConfigInfo>, program: &Path) -> String {
-    if let Some(config_info) = &config_info {
-        for item in config_info.lnkInfo.iter() {
-            if item.name == program.file_name().unwrap().to_str().unwrap() {
-                if item.alia.is_empty() {
-                    return program.file_stem().unwrap().to_str().unwrap().to_string();
-                }
-                return item.alia.clone();
+/// 创建程序快捷方式
+///
+/// 参数
+/// - `program_path`: 程序路径
+/// - `link_path`: 快捷方式保存路径
+/// - `link_info`: 快捷方式信息
+///
+/// 返回
+/// - `Ok(())`: 创建成功
+/// - `Err(...)`：失败则返回错误
+fn create_program_shortcut(program_path: &Path, link_path: &Path, link_info: &Option<LnkInfo>) -> Result<(), Box<dyn Error>> {
+    // 位置
+    let location = {
+        if let Some(link_info) = link_info {
+            match &link_info.location {
+                None => link_path,
+                Some(location) => location.as_ref()
             }
+        } else{
+            link_path
         }
-    }
-    program.file_stem().unwrap().to_str().unwrap().to_string()
-}
+    };
 
-/// 获取命令行参数
-fn get_lnk_cmdline(config_info: &Option<ConfigInfo>, program: &Path) -> Option<String> {
-    if let Some(config_info) = &config_info {
-        for item in config_info.lnkInfo.iter() {
-            if item.name == program.file_name()?.to_str()? {
-                if item.cmdline.is_empty() {
-                    return None;
-                }
-                return Some((*item.cmdline).to_string());
+    if !link_path.exists() {
+        fs::create_dir_all(link_path)?;
+    }
+
+    // 别名
+    let name = {
+        if let Some(link_info) = link_info {
+            match &link_info.alia {
+                None => program_path.file_stem().unwrap().to_str().unwrap().to_string(),
+                Some(alia) => alia.clone()
             }
+        } else{
+            program_path.file_stem().unwrap().to_str().unwrap().to_string()
         }
-    }
-    None
-}
+    };
 
-/// 获取图标路径
-fn get_lnk_icon(config_info: &Option<ConfigInfo>, program: &Path) -> Option<String> {
-    if let Some(config_info) = config_info {
-        // 优先从配置文件获取
-        for item in config_info.lnkInfo.iter() {
-            if item.name == program.file_name()?.to_str()? && !item.icon.is_empty() {
-                let icon_path = process_env(Path::new(&item.icon));
-                if icon_path.exists() {
-                    return Some(icon_path.to_str()?.to_string());
-                } else {
-                    write_console(ConsoleType::Warning, &format!("Icon not found: {}", icon_path.to_str()?));
+    // 命令行
+    let cmdline = {
+        if let Some(link_info) = link_info {
+            link_info.cmdline.clone()
+        } else {
+            None
+        }
+    };
+
+    // 图标
+    let icon_path = {
+        if let Some(link_info) = link_info {
+            match &link_info.icon {
+                None => None,
+                Some(icon) => {
+                    let icon_path = process_env(Path::new(icon));
+                    if icon_path.exists() {
+                        Some(icon_path.to_str().unwrap().to_string())
+                    } else {
+                        write_console(ConsoleType::Warning, &format!("Icon not found: {}", icon_path.to_str().unwrap()));
+                        None
+                    }
                 }
             }
+        } else {
+            None
         }
-    }
+    };
+
     // 检查程序目录下同名ico文件
-    let default_icon = program.parent()?.join(
-        format!("{}.ico", program.file_stem()?.to_str()?)
-    );
-    if default_icon.exists() {
-        return Some(default_icon.to_str()?.to_string());
-    }
-    None
+    let icon_path = {
+        if icon_path.is_some() {
+            icon_path
+        } else {
+            let default_icon = program_path.parent().unwrap().join(format!("{}.ico", program_path.file_stem().unwrap().to_str().unwrap()));
+            if default_icon.exists() {
+                Some(default_icon.to_str().unwrap().to_string())
+            } else {
+                None
+            }
+        }
+    };
+    create_shortcut(program_path, &location.join(format!("{}.lnk", name)), cmdline, icon_path)?;
+    Ok(())
 }
-

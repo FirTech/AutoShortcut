@@ -1,4 +1,5 @@
-use std::path::{Path};
+use std::env;
+use std::path::{Path, PathBuf};
 use mslnk::{MSLinkError, ShellLink};
 
 /// 创建快捷方式
@@ -7,6 +8,27 @@ pub fn create_shortcut(target: &Path, link: &Path, args:  Option<String>, icon: 
     sl.set_arguments(args);
     sl.set_icon_location(icon);
     sl.create_lnk(link)
+}
+
+/// 处理特殊环境变量
+pub fn process_env(path: &Path) -> PathBuf {
+    let mut output = path.display().to_string().to_lowercase();
+    // 处理 %Desktop% 和 %Programs%
+    if let Ok(user_profile) = env::var("USERPROFILE") {
+        let desktop = PathBuf::from(&user_profile).join("Desktop");
+        output = output.replace("%desktop%", &desktop.to_string_lossy());
+
+        let programs = PathBuf::from(&user_profile).join("AppData/Roaming/Microsoft/Windows/Start Menu/Programs");
+        output = output.replace("%programs%", &programs.to_string_lossy());
+    }
+
+    // 处理系统环境变量（如 %APPDATA%）
+    for (key, value) in env::vars() {
+        let placeholder = format!("%{}%", key.to_lowercase());
+        output = output.replace(&placeholder, &value);
+    }
+
+    PathBuf::from(output)
 }
 
 /// glob匹配函数

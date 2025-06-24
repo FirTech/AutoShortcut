@@ -2,7 +2,7 @@ use std::env;
 use std::error::Error;
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path};
 use serde::{Deserialize, Serialize};
 
 /// 配置文件信息
@@ -23,19 +23,22 @@ pub struct ConfigInfo {
 }
 
 /// 程序信息列表
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize,Clone, Debug)]
 pub struct LnkInfo {
     /// 程序名
     pub name: String,
     /// 快捷方式别名
     #[serde(default)]
-    pub alia: String,
+    pub alia: Option<String>,
     /// 图标
     #[serde(default)]
-    pub icon: String,
+    pub icon: Option<String>,
     /// 命令行参数
     #[serde(default)]
-    pub cmdline: String,
+    pub cmdline: Option<String>,
+    /// 指定快捷方式位置
+    #[serde(default)]
+    pub location: Option<String>,
 }
 
 impl ConfigInfo {
@@ -60,5 +63,16 @@ impl ConfigInfo {
         }
 
         Ok(serde_json::from_str(&expanded)?)
+    }
+}
+
+impl LnkInfo {
+    pub fn get_lnk_info(link_info: &Vec<LnkInfo>, program_path: &Path) -> Option<LnkInfo> {
+        for item in link_info {
+            if item.name == program_path.file_name().unwrap().to_str().unwrap() {
+                return Some(item.clone());
+            }
+        }
+        None
     }
 }
