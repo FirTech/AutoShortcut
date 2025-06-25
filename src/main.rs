@@ -8,17 +8,17 @@ mod utils;
 mod cli;
 mod config;
 
+use crate::config::{ConfigInfo, LnkInfo};
+use crate::console::{write_console, ConsoleType};
+use crate::utils::{create_shortcut, get_exe_description, matches_glob, process_env};
+use clap::Parser;
 use std::collections::HashSet;
-use std::{fs};
 use std::error::Error;
+use std::fs;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use clap::Parser;
 use walkdir::WalkDir;
-use crate::console::{ConsoleType, write_console};
-use crate::utils::{create_shortcut, matches_glob, process_env};
-use crate::config::{ConfigInfo, LnkInfo};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = crate::cli::Cli::parse();
@@ -87,17 +87,14 @@ pub fn auto_shortcut(target_path: &Path, lnk_path: &Path, config_path: Option<Pa
     }
 
     // 获取搜索深度
-    let search_depth = config_info.as_ref().map(|c| { if c.searchDepth == 0 {2}  else {c.searchDepth} }).unwrap_or(2);
+    let search_depth = config_info.as_ref().map(|c| { if c.searchDepth == 0 { 2 } else { c.searchDepth } }).unwrap_or(2);
 
-    // 遍历指定目录的子目录
+    // 场景: 遍历子目录
     for root_path in WalkDir::new(target_path).max_depth(search_depth).into_iter().skip(1).filter_map(|e| e.ok()).filter(|file| file.path().is_dir()) {
-
         // 检查是否已处理该目录
         if processed_dirs.contains(root_path.path().parent().unwrap()) {
             continue;
         }
-
-        folder_count += 1; // 统计遍历的文件夹
 
         // 排除目录: 有文件夹但无文件
         if WalkDir::new(root_path.path()).max_depth(1).into_iter().filter_map(|e| e.ok())
@@ -112,19 +109,24 @@ pub fn auto_shortcut(target_path: &Path, lnk_path: &Path, config_path: Option<Pa
             }
         }
 
-        // 枚举根目录的所有exe文件
+        // 枚举子目录的所有exe文件
         let total_exe_files: Vec<PathBuf> = WalkDir::new(&root_path.path()).into_iter().filter_map(|e| e.ok())
             .filter(|file| file.path().is_file() && file.path().extension().unwrap_or_default().to_ascii_lowercase() == "exe")
             .filter(|file| if config_info.is_none() { true } else { &config_info.as_ref().unwrap().ignore.iter().filter(|&item| file.file_name().to_str().unwrap().contains(item)).count() == &0 })
             .map(|file| file.into_path()).collect();
+
+        // 排除目录: 无exe文件的子目录
         if total_exe_files.is_empty() {
             continue;
         }
 
-        // 安装软件
-        if install  {
+        // 统计遍历的文件夹
+        folder_count += 1;
+
+        // 运行安装脚本
+        if install {
             for install_script in WalkDir::new(&root_path.path()).max_depth(1).into_iter().filter_map(|e| e.ok())
-                .filter(|file|file.path().is_file()){
+                .filter(|file| file.path().is_file()) {
                 let mut matched = false;
                 let filename = install_script.file_name().to_str().unwrap().to_lowercase();
 
@@ -136,7 +138,7 @@ pub fn auto_shortcut(target_path: &Path, lnk_path: &Path, config_path: Option<Pa
                 }
 
                 // 默认脚本规则
-                if filename.to_ascii_lowercase().contains("setup.cmd")  || filename.to_ascii_lowercase().contains("setup.bat") || filename.to_ascii_lowercase().contains("install.cmd") || filename.to_ascii_lowercase().contains("install.bat") {
+                if filename.to_ascii_lowercase().contains("setup.cmd") || filename.to_ascii_lowercase().contains("setup.bat") || filename.to_ascii_lowercase().contains("install.cmd") || filename.to_ascii_lowercase().contains("install.bat") {
                     matched = true;
                 }
                 if matched {
@@ -175,7 +177,7 @@ pub fn auto_shortcut(target_path: &Path, lnk_path: &Path, config_path: Option<Pa
             }
             continue;
         }
-        
+
         // 绿色软件
         let get_main_program = || {
             // 1.判断特定规则
@@ -260,7 +262,7 @@ fn create_program_shortcut(program_path: &Path, link_path: &Path, link_info: &Op
                 None => link_path,
                 Some(location) => location.as_ref()
             }
-        } else{
+        } else {
             link_path
         }
     };
@@ -276,8 +278,19 @@ fn create_program_shortcut(program_path: &Path, link_path: &Path, link_info: &Op
                 None => program_path.file_stem().unwrap().to_str().unwrap().to_string(),
                 Some(alia) => alia.clone()
             }
-        } else{
-            program_path.file_stem().unwrap().to_str().unwrap().to_string()
+        } else {
+            // 获取程序描述
+            if let Ok(Some(description)) = get_exe_description(program_path) {
+                if !description.trim().to_string().trim_matches('_').is_empty() {
+                    description.trim().to_string()
+                } else {
+                    // 默认程序名称（描述为空）
+                    program_path.file_stem().unwrap().to_str().unwrap().to_string()
+                }
+            } else {
+                // 默认程序名称
+                program_path.file_stem().unwrap().to_str().unwrap().to_string()
+            }
         }
     };
 
