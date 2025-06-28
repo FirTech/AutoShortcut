@@ -1,9 +1,9 @@
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::error::Error;
 use std::fs::File;
 use std::io::Read;
-use std::path::{Path};
-use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// 配置文件信息
 #[derive(Serialize, Deserialize, Debug)]
@@ -23,7 +23,7 @@ pub struct ConfigInfo {
 }
 
 /// 程序信息列表
-#[derive(Serialize, Deserialize,Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct LnkInfo {
     /// 程序名
     pub name: String,
@@ -53,16 +53,15 @@ impl ConfigInfo {
 
         // 替换 %cd% 为配置文件所在目录
         let mut expanded = config_content
-            .replace("%cd%", &config_dir.replace("\\","\\\\"))
-            .replace("%CD%", &config_dir.replace("\\","\\\\"));
+            .replace("%cd%", &config_dir.replace("\\", "\\\\"))
+            .replace("%CD%", &config_dir.replace("\\", "\\\\"));
 
         // 处理系统环境变量（如 %APPDATA%）
         for (key, value) in env::vars() {
             let placeholder = format!("%{}%", key.to_lowercase());
-            expanded = expanded.replace(&placeholder, &value.replace("\\","\\\\"));
+            expanded = expanded.replace(&placeholder, &value.replace("\\", "\\\\"));
         }
-
-        Ok(serde_json::from_str(&expanded)?)
+        Ok(toml::from_str(&expanded)?)
     }
 }
 
