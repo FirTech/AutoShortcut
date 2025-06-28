@@ -1,12 +1,16 @@
+use goblin::pe::subsystem::IMAGE_SUBSYSTEM_WINDOWS_GUI;
+use goblin::pe::PE;
 use mslnk::{MSLinkError, ShellLink};
 use std::env;
 use std::error::Error;
 use std::ffi::OsStr;
+use std::fs::read;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::BOOL;
+use windows::core::{BOOL, PCWSTR};
 use windows::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW};
+use windows::Win32::System::SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO};
+use windows::Win32::UI::Shell::ExtractIconExW;
 
 /// 创建快捷方式
 pub fn create_shortcut(target: &Path, link: &Path, args: Option<String>, icon: Option<String>) -> Result<(), MSLinkError> {
@@ -153,4 +157,61 @@ pub fn get_exe_description(path: &Path) -> Result<Option<String>, Box<dyn Error>
     let description = String::from_utf16_lossy(wide_chars).trim_end_matches('\0').to_string();
 
     Ok(Some(description))
+}
+
+/// 获取当前系统的处理器架构。
+///
+/// 此函数通过调用 Windows API `GetNativeSystemInfo` 来检索有关当前系统体系结构的信息。
+/// 它返回 `wProcessorArchitecture` 字段的值，该值标识处理器架构。
+///
+/// 返回
+/// - `u16`: 代表系统处理器架构的数值。常见的值包括：
+///   - `0` (PROCESSOR_ARCHITECTURE_INTEL): Intel 或兼容的 x86 架构。
+///   - `9` (PROCESSOR_ARCHITECTURE_AMD64): x64 (AMD64) 架构。
+///   - `12` (PROCESSOR_ARCHITECTURE_ARM64): ARM64 架构。
+///   - 其他值表示其他或未知的架构类型。
+pub unsafe fn get_native_arch() -> u16 {
+    let mut sys_info = SYSTEM_INFO::default();
+    GetNativeSystemInfo(&mut sys_info);
+    sys_info.Anonymous.Anonymous.wProcessorArchitecture.0
+}
+
+/// 获取程序架构
+///
+/// 参数
+/// - `program`: 程序路径
+///
+/// 返回
+/// - `Ok(u16)`: PE 文件 Machine 字段
+///   - 0x014c → x86
+///   - 0x8664 → x64
+///   - 0xAA64 → ARM64
+/// - `Err(...)`：读取或解析失败
+pub fn getProgramArch(program: &Path) -> Result<u16, Box<dyn Error>> {
+    let bytes = read(program)?;
+    let pe = PE::parse(&bytes)?;
+
+    let machine = pe.header.coff_header.machine;
+    Ok(machine)
+}
+
+/// 判断程序是否为界面程序
+pub fn is_gui_program(program: &Path) -> Result<bool, Box<dyn Error>> {
+    let bytes = read(program)?;
+    let pe = PE::parse(&bytes)?;
+    Ok(pe.header.optional_header.unwrap().windows_fields.subsystem == IMAGE_SUBSYSTEM_WINDOWS_GUI)
+}
+
+/// 判断程序是否有图标
+pub fn has_icon_in_program(program: &Path) -> bool {
+    // 将 Path 转换为 Windows API 所需的宽字符串 (UTF-16)
+    let path_wide: Vec<u16> = program.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+
+    // 获取文件中包含的图标总数
+    let icon_count = unsafe {
+        ExtractIconExW(PCWSTR(path_wide.as_ptr()), -1, None, None, 0)
+    };
+
+    // 如果返回的图标数量大于 0，则表示存在图标
+    icon_count > 0
 }
