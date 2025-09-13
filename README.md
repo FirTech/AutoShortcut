@@ -283,7 +283,7 @@ according to your preference.
 [[shortcut]]
 name = "shortcut name"
 exec = "program path"
-work_dir = "starting location""
+work_dir = "starting location"
 args = "Command-line arguments"
 icon = "Icon path"
 dest = "Shortcut location"
@@ -341,6 +341,7 @@ shortcut = [
 "Program Path" = "Comment"
 # Example
 "Everything.exe" = "File Search"
+```
 
 ### Support for Built-in Variables
 
