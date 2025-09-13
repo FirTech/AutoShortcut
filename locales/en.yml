@@ -1,0 +1,44 @@
+cmdline_tool_tips: "This is a command line tool.\n\nYou need to open cmd.exe and run it from there."
+
+console:
+  warning: "Warning"
+  success: "Success"
+  info: "Info   "
+  debug: "Debug  "
+  error: "Err    "
+
+config:
+  invalid_ratio: "Invalid ratio value (0.0-1.0): %{ratio}"
+  parse_failed: "Configuration file parsing failed"
+  enable_escape: "Enabled escape"
+  miss_dest: "Configuration entry missing `dest`: %{path}"
+  shortcut_missing: "[Shortcut mapping not found] %{path}"
+  invalid_name: "Invalid shortcut name '%{name}' in config"
+
+file:
+  access_failed: "[Access failed] %{error}"
+  create_dir_failed: "[Create directory failed] %{path}"
+  not_found: "[File not found] %{path}"
+  no_target: "[No target path] %{path}"
+  icon_not_found: "[Icon file not found] %{path}"
+  icon_resource_not_found: "[Icon resource file not found] %{path}"
+
+scan:
+  prune: "[Pruning] %{path}"
+  skip: "[Skipping] %{path}"
+  ignore: "[Ignoring] %{path}"
+  main_not_recognized: "[Main program not recognized] %{path}"
+  score_calculation: "[Score] %{file} => %{score} points (%{details})"
+  ignore_in_config: "[Config ignored] %{path}"
+
+directory:
+  category: "[Category] %{path}"
+  single_file: "[Single] %{path}"
+  hybrid: "[Hybrid] %{path}"
+  green: "[Green] %{path}"
+
+shortcut:
+  create_success: "[Create Shortcut] %{name} => %{path}"
+  create_failed: "[Create Shortcut] %{path}"
+  start: "[Start application] %{path}"
+  run_install: "[Run script] %{path}"

@@ -1,0 +1,44 @@
+cmdline_tool_tips: "这是一个命令行工具，你需要从 cmd.exe 中运行."
+
+console:
+  warning: "警告"
+  success: "成功"
+  info: "信息"
+  debug: "调试"
+  error: "错误"
+
+config:
+  invalid_ratio: "无效的比例值 (0.0-1.0): %{ratio}"
+  parse_failed: "配置文件解析失败"
+  enable_escape: "已开启转义"
+  miss_dest: "配置缺少 `dest` 字段: %{path}"
+  shortcut_missing: "[未找到快捷方式配置] %{path}"
+  invalid_name: "配置中的快捷方式名称\"%{name}\"无效"
+
+file:
+  access_failed: "[访问失败] %{error}"
+  create_dir_failed: "[创建目录失败] %{path}"
+  not_found: "[文件不存在] %{path}"
+  no_target: "[无目标路径] %{path}"
+  icon_not_found: "[图标文件不存在] %{path}"
+  icon_resource_not_found: "[图标资源文件不存在] %{path}"
+
+scan:
+  prune: "[剪枝] %{path}"
+  skip: "[跳过] %{path}"
+  ignore: "[忽略] %{path}"
+  main_not_recognized: "[未识别主程序] %{path}"
+  score_calculation: "[评分] %{file} => %{score} 分 (%{details})"
+  ignore_in_config: "[配置忽略] %{path}"
+
+directory:
+  category: "[分类目录] %{path}"
+  single_file: "[单文件目录] %{path}"
+  hybrid: "[混合目录] %{path}"
+  green: "[绿色软件] %{path}"
+
+shortcut:
+  create_success: "[创建快捷方式] %{name} => %{path}"
+  create_failed: "[创建快捷方式] %{path}"
+  start: "[运行应用] %{path}"
+  run_install: "[运行脚本] %{path}"

@@ -1,0 +1,44 @@
+cmdline_tool_tips: "這是一個命令列工具，你需要從 cmd.exe 執行."
+
+console:
+  warning: "警告"
+  success: "成功"
+  info: "訊息"
+  debug: "調試"
+  error: "錯誤"
+
+config:
+  invalid_ratio: "無效的比例值 (0.0-1.0): %{ratio}"
+  parse_failed: "設定檔解析失敗"
+  enable_escape: "已開啟轉義"
+  miss_dest: "配置缺少 `dest` 欄位: %{path}"
+  shortcut_missing: "[找不到捷徑設定] %{path}"
+  invalid_name: "配置中的捷徑名稱\"%{name}\"無效"
+
+file:
+  access_failed: "[存取失敗] %{error}"
+  create_dir_failed: "[建立目錄失敗] %{path}"
+  not_found: "[檔案不存在] %{path}"
+  no_target: "[無目標路徑] %{path}"
+  icon_not_found: "[圖示檔案不存在] %{path}"
+  icon_resource_not_found: "[圖示資源檔案不存在] %{path}"
+
+scan:
+  prune: "[剪枝] %{path}"
+  skip: "[跳過] %{path}"
+  ignore: "[忽略] %{path}"
+  main_not_recognized: "[未辨識主程式] %{path}"
+  score_calculation: "[評分] %{file} => %{score} 分 (%{details})"
+  ignore_in_config: "[設定忽略] %{path}"
+
+directory:
+  category: "[分類目錄] %{path}"
+  single_file: "[單一檔案目錄] %{path}"
+  hybrid: "[混合目錄] %{path}"
+  green: "[綠色軟體] %{path}"
+
+shortcut:
+  create_success: "[建立捷徑] %{name} => %{path}"
+  create_failed: "[建立捷徑] %{path}"
+  start: "[運行應用程式] %{path}"
+  run_install: "[執行腳本] %{path}"
