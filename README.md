@@ -1,6 +1,6 @@
 # AutoShortcut
 
-[Simplified Chinese](README.zh.md) [English](README.md)
+[简体中文](README.zh.md) [English](README.md)
 
 ## Introduction
 
