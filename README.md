@@ -193,7 +193,7 @@ Instructions:
 Configure files or directories to be ignored during scanning. Subsequent scans will ignore these directories/files. The
 default value is system special directories (such as the Recycle Bin).
 
-```toml
+```ini
 ignore = ["temp", "Everything.exe", "D:\Everything"]
 ```
 
@@ -311,7 +311,7 @@ shortcut = [
 
 - Mapping table mode
 
-```toml
+```ini
 # Configure shortcut name
 [name]
 "Program path" = "Shortcut name"
@@ -376,7 +376,7 @@ To better meet personalized needs, in addition to scanning mode, pure configurat
 > - If `name` (shortcut name) is omitted, the program description will be used as the shortcut name.
 > - Similarly, configuration item mode, inline mode, and mapping table mode are supported.
 
-```toml
+```ini
 shortcut = [
     # The configuration here is only for field descriptions
     { name = "shortcut name", exec = "program path", args = "command line arguments", icon = "icon path", dest = "shortcut path" },
@@ -542,7 +542,7 @@ leading space is controlled by the template).
 
 - Unified icon file paths and comments
 
-```toml
+```ini
 [template]
 icon = "D:\Icons\{stem}.ico"
 comment = "{exec}"
@@ -660,7 +660,7 @@ shortcut = [
 
 ### Pure Configuration Mode Example
 
-```toml
+```ini
 # Pure Configuration Mode: Do not scan directories, only create the specified shortcut
 [[shortcut]]
 name = "WeChat"
