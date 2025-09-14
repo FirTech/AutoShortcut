@@ -1191,7 +1191,11 @@ fn create_program_shortcut(
     };
 
     if create_dir {
-        dest = dest.join(program_path.parent().unwrap().file_stem().unwrap());
+        if let Some(parent) = program_path.parent() {
+            if let Some(file_name) = parent.file_name() {
+                dest = dest.join(file_name);
+            }
+        }
     }
 
     // 创建快捷方式目录
