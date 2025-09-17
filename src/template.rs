@@ -1,4 +1,7 @@
-use crate::utils::{get_exe_company_name, get_exe_copyright, get_exe_description, get_exe_file_version, get_exe_original_filename, get_exe_product_name, get_program_arch, sanitize_description};
+use crate::utils::{
+    get_exe_company_name, get_exe_copyright, get_exe_description, get_exe_file_version,
+    get_exe_original_filename, get_exe_product_name, get_program_arch, sanitize_description,
+};
 use chrono::{DateTime, Local, NaiveDateTime};
 use serde::Serialize;
 use serde_json::Value;
@@ -17,8 +20,7 @@ use std::path::Path;
 /// 渲染后的字符串
 pub fn process_template(path: &Path, template: &str) -> String {
     let mut engine = TemplateEngine::new();
-    let rendered = engine.render(template, &render_var(path)).unwrap();
-    rendered
+    engine.render(template, &render_var(path)).unwrap()
 }
 
 /// 渲染变量
@@ -38,23 +40,51 @@ fn render_var(path: &Path) -> HashMap<String, String> {
     vars.insert("exec".into(), path.display().to_string());
 
     // 程序文件名
-    vars.insert("stem".into(), path.file_stem().and_then(|s| s.to_str()).unwrap_or_default().to_string());
+    vars.insert(
+        "stem".into(),
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string(),
+    );
 
     // 程序后缀名
-    vars.insert("ext".into(), path.extension().and_then(|s| s.to_str()).unwrap_or_default().to_string());
+    vars.insert(
+        "ext".into(),
+        path.extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string(),
+    );
 
     // 程序父路径
-    vars.insert("parent".into(), path.parent().and_then(|s| s.to_str()).unwrap_or_default().to_string());
+    vars.insert(
+        "parent".into(),
+        path.parent()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string(),
+    );
 
     // 程序父路径名称
-    vars.insert("parent_name".into(), path.parent().and_then(|p| p.file_stem()).and_then(|s| s.to_str()).unwrap_or_default().to_string());
+    vars.insert(
+        "parent_name".into(),
+        path.parent()
+            .and_then(|p| p.file_stem())
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string(),
+    );
 
     // 程序描述，清理控制字符，合并空白，若为网址或明显无意义则变空
     let desc_raw = match get_exe_description(path) {
         Ok(Some(v)) => v,
         _ => String::new(),
     };
-    vars.insert("desc".into(), sanitize_description(&desc_raw).unwrap_or("".to_string()));
+    vars.insert(
+        "desc".into(),
+        sanitize_description(&desc_raw).unwrap_or("".to_string()),
+    );
     vars.insert("desc_raw".into(), desc_raw);
 
     // 产品名称
@@ -62,32 +92,47 @@ fn render_var(path: &Path) -> HashMap<String, String> {
         Ok(Some(v)) => v,
         _ => String::new(),
     };
-    vars.insert("product".into(), sanitize_description(&product_raw).unwrap_or("".to_string()));
+    vars.insert(
+        "product".into(),
+        sanitize_description(&product_raw).unwrap_or("".to_string()),
+    );
     vars.insert("product_raw".into(), product_raw.clone());
 
     // 公司名称
-    vars.insert("company".into(), match get_exe_company_name(path) {
-        Ok(Some(v)) => v,
-        _ => String::new(),
-    });
+    vars.insert(
+        "company".into(),
+        match get_exe_company_name(path) {
+            Ok(Some(v)) => v,
+            _ => String::new(),
+        },
+    );
 
     // 原始文件名
-    vars.insert("orig_filename".into(), match get_exe_original_filename(path) {
-        Ok(Some(v)) => v,
-        _ => String::new(),
-    });
+    vars.insert(
+        "orig_filename".into(),
+        match get_exe_original_filename(path) {
+            Ok(Some(v)) => v,
+            _ => String::new(),
+        },
+    );
 
     // 版权信息
-    vars.insert("copyright".into(), match get_exe_copyright(path) {
-        Ok(Some(v)) => v,
-        _ => String::new(),
-    });
+    vars.insert(
+        "copyright".into(),
+        match get_exe_copyright(path) {
+            Ok(Some(v)) => v,
+            _ => String::new(),
+        },
+    );
 
     // 程序版本
-    vars.insert("version".into(), match get_exe_file_version(path) {
-        Ok(Some(v)) => v,
-        _ => String::new(),
-    });
+    vars.insert(
+        "version".into(),
+        match get_exe_file_version(path) {
+            Ok(Some(v)) => v,
+            _ => String::new(),
+        },
+    );
 
     // 程序架构
     let (arch_label, arch_num) = match get_program_arch(path) {
@@ -100,68 +145,102 @@ fn render_var(path: &Path) -> HashMap<String, String> {
     vars.insert("arch_num".into(), arch_num.clone().unwrap_or_default());
 
     // 程序大小
-    vars.insert("size".into(), match path.metadata() {
-        Ok(metadata) => metadata.len().to_string(),
-        _ => String::new(),
-    });
-    vars.insert("size_kb".into(), match path.metadata() {
-        Ok(metadata) => format!("{:.1}", (metadata.len() as f64) / 1024.0),
-        _ => String::new(),
-    });
-    vars.insert("size_mb".into(), match path.metadata() {
-        Ok(metadata) => format!("{:.2}", (metadata.len() as f64) / 1024.0 / 1024.0),
-        _ => String::new(),
-    });
-    vars.insert("size_gb".into(), match path.metadata() {
-        Ok(metadata) => format!("{:.3}", (metadata.len() as f64) / 1024.0 / 1024.0 / 1024.0),
-        _ => String::new(),
-    });
-    vars.insert("size_tb".into(), match path.metadata() {
-        Ok(metadata) => format!("{:.4}", (metadata.len() as f64) / 1024.0 / 1024.0 / 1024.0 / 1024.0),
-        _ => String::new(),
-    });
+    vars.insert(
+        "size".into(),
+        match path.metadata() {
+            Ok(metadata) => metadata.len().to_string(),
+            _ => String::new(),
+        },
+    );
+    vars.insert(
+        "size_kb".into(),
+        match path.metadata() {
+            Ok(metadata) => format!("{:.1}", (metadata.len() as f64) / 1024.0),
+            _ => String::new(),
+        },
+    );
+    vars.insert(
+        "size_mb".into(),
+        match path.metadata() {
+            Ok(metadata) => format!("{:.2}", (metadata.len() as f64) / 1024.0 / 1024.0),
+            _ => String::new(),
+        },
+    );
+    vars.insert(
+        "size_gb".into(),
+        match path.metadata() {
+            Ok(metadata) => format!("{:.3}", (metadata.len() as f64) / 1024.0 / 1024.0 / 1024.0),
+            _ => String::new(),
+        },
+    );
+    vars.insert(
+        "size_tb".into(),
+        match path.metadata() {
+            Ok(metadata) => format!(
+                "{:.4}",
+                (metadata.len() as f64) / 1024.0 / 1024.0 / 1024.0 / 1024.0
+            ),
+            _ => String::new(),
+        },
+    );
 
     // 辅助：desc_or_stem
-    vars.insert("desc_or_stem".into(), if !vars.get("desc").unwrap().is_empty() { vars.get("desc").unwrap().clone() } else { vars.get("stem").unwrap().clone() });
+    vars.insert(
+        "desc_or_stem".into(),
+        if !vars.get("desc").unwrap().is_empty() {
+            vars.get("desc").unwrap().clone()
+        } else {
+            vars.get("stem").unwrap().clone()
+        },
+    );
 
     // 创建时间
-    vars.insert("create_time".into(), match path.metadata() {
-        Ok(metadata) => {
-            if let Ok(create_time) = metadata.created() {
-                let date: DateTime<Local> = DateTime::from(create_time);
-                date.format("%Y-%m-%d %H:%M:%S").to_string()
-            } else {
-                String::new()
+    vars.insert(
+        "create_time".into(),
+        match path.metadata() {
+            Ok(metadata) => {
+                if let Ok(create_time) = metadata.created() {
+                    let date: DateTime<Local> = DateTime::from(create_time);
+                    date.format("%Y-%m-%d %H:%M:%S").to_string()
+                } else {
+                    String::new()
+                }
             }
-        }
-        _ => String::new(),
-    });
+            _ => String::new(),
+        },
+    );
 
     // 修改时间
-    vars.insert("modified_time".into(), match path.metadata() {
-        Ok(metadata) => {
-            if let Ok(modified_time) = metadata.modified() {
-                let date: DateTime<Local> = DateTime::from(modified_time);
-                date.format("%Y-%m-%d %H:%M:%S").to_string()
-            } else {
-                String::new()
+    vars.insert(
+        "modified_time".into(),
+        match path.metadata() {
+            Ok(metadata) => {
+                if let Ok(modified_time) = metadata.modified() {
+                    let date: DateTime<Local> = DateTime::from(modified_time);
+                    date.format("%Y-%m-%d %H:%M:%S").to_string()
+                } else {
+                    String::new()
+                }
             }
-        }
-        _ => String::new(),
-    });
+            _ => String::new(),
+        },
+    );
 
     // 访问时间
-    vars.insert("accessed_time".into(), match path.metadata() {
-        Ok(metadata) => {
-            if let Ok(accessed_time) = metadata.accessed() {
-                let date: DateTime<Local> = DateTime::from(accessed_time); // 本地时区
-                date.format("%Y-%m-%d %H:%M:%S").to_string()
-            } else {
-                String::new()
+    vars.insert(
+        "accessed_time".into(),
+        match path.metadata() {
+            Ok(metadata) => {
+                if let Ok(accessed_time) = metadata.accessed() {
+                    let date: DateTime<Local> = DateTime::from(accessed_time); // 本地时区
+                    date.format("%Y-%m-%d %H:%M:%S").to_string()
+                } else {
+                    String::new()
+                }
             }
-        }
-        _ => String::new(),
-    });
+            _ => String::new(),
+        },
+    );
 
     vars
 }
@@ -282,11 +361,17 @@ impl TemplateEngine {
         for (i, ch) in expr.char_indices() {
             match ch {
                 '{' => bracket_depth += 1,
-                '}' => if bracket_depth > 0 { bracket_depth -= 1; },
-                '?' => if bracket_depth == 0 && question_mark_pos.is_none() {
-                    question_mark_pos = Some(i);
-                    break;
-                },
+                '}' => {
+                    if bracket_depth > 0 {
+                        bracket_depth -= 1;
+                    }
+                }
+                '?' => {
+                    if bracket_depth == 0 && question_mark_pos.is_none() {
+                        question_mark_pos = Some(i);
+                        break;
+                    }
+                }
                 _ => {}
             }
         }
@@ -297,11 +382,17 @@ impl TemplateEngine {
             for (i, ch) in expr.char_indices().skip(q_pos + 1) {
                 match ch {
                     '{' => bracket_depth += 1,
-                    '}' => if bracket_depth > 0 { bracket_depth -= 1; },
-                    ':' => if bracket_depth == 0 {
-                        colon_pos = Some(i);
-                        break;
-                    },
+                    '}' => {
+                        if bracket_depth > 0 {
+                            bracket_depth -= 1;
+                        }
+                    }
+                    ':' => {
+                        if bracket_depth == 0 {
+                            colon_pos = Some(i);
+                            break;
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -318,7 +409,9 @@ impl TemplateEngine {
                 } else {
                     // 处理假值表达式可能包含的大括号
                     let false_expr_trimmed = false_expr.trim();
-                    let false_expr_to_eval = if false_expr_trimmed.starts_with('{') && false_expr_trimmed.ends_with('}') {
+                    let false_expr_to_eval = if false_expr_trimmed.starts_with('{')
+                        && false_expr_trimmed.ends_with('}')
+                    {
                         &false_expr_trimmed[1..false_expr_trimmed.len() - 1]
                     } else {
                         false_expr_trimmed
@@ -337,7 +430,9 @@ impl TemplateEngine {
         let expr = expr.trim();
 
         // 检查是否是字符串字面量
-        if (expr.starts_with('"') && expr.ends_with('"')) || (expr.starts_with('\'') && expr.ends_with('\'')) {
+        if (expr.starts_with('"') && expr.ends_with('"'))
+            || (expr.starts_with('\'') && expr.ends_with('\''))
+        {
             // 去除引号
             return Ok(expr[1..expr.len() - 1].to_string());
         }
@@ -373,16 +468,19 @@ impl TemplateEngine {
 
             // 使用冒号:作为参数分隔符
             if let Some(colon_pos) = self.find_top_level_char(filter_part, ':') {
-                filter_name = &filter_part[..colon_pos].trim();
+                filter_name = filter_part[..colon_pos].trim();
                 let arg = &filter_part[colon_pos + 1..].trim();
 
                 // 处理参数可能的引号
-                filter_arg = Some(if (arg.starts_with('"') && arg.ends_with('"')) ||
-                    (arg.starts_with('\'') && arg.ends_with('\'')) {
-                    arg[1..arg.len() - 1].to_string()
-                } else {
-                    arg.to_string()
-                });
+                filter_arg = Some(
+                    if (arg.starts_with('"') && arg.ends_with('"'))
+                        || (arg.starts_with('\'') && arg.ends_with('\''))
+                    {
+                        arg[1..arg.len() - 1].to_string()
+                    } else {
+                        arg.to_string()
+                    },
+                );
             }
 
             // 应用过滤器
@@ -411,8 +509,10 @@ impl TemplateEngine {
                     if let Some(arg) = &filter_arg {
                         // 支持 "start:end" 或 'start:end' 或 start:end（引号可选）
                         let mut s = arg.trim();
-                        if s.len() >= 2 && ((s.starts_with('"') && s.ends_with('"')) ||
-                            (s.starts_with('\'') && s.ends_with('\''))) {
+                        if s.len() >= 2
+                            && ((s.starts_with('"') && s.ends_with('"'))
+                                || (s.starts_with('\'') && s.ends_with('\'')))
+                        {
                             s = &s[1..s.len() - 1];
                         }
 
@@ -436,7 +536,11 @@ impl TemplateEngine {
                         };
                         let mut start_idx = match start_res {
                             Ok(v) => {
-                                if v < 0 { len + v } else { v }
+                                if v < 0 {
+                                    len + v
+                                } else {
+                                    v
+                                }
                             }
                             Err(_) => {
                                 // 参数无法解析 -> 跳过该 filter（保持 value 不变）
@@ -452,7 +556,11 @@ impl TemplateEngine {
                         };
                         let mut end_idx = match end_res {
                             Ok(v) => {
-                                if v < 0 { len + v } else { v }
+                                if v < 0 {
+                                    len + v
+                                } else {
+                                    v
+                                }
                             }
                             Err(_) => {
                                 continue;
@@ -460,10 +568,18 @@ impl TemplateEngine {
                         };
 
                         // Clamp 到 [0, len]
-                        if start_idx < 0 { start_idx = 0; }
-                        if end_idx < 0 { end_idx = 0; }
-                        if start_idx > len { start_idx = len; }
-                        if end_idx > len { end_idx = len; }
+                        if start_idx < 0 {
+                            start_idx = 0;
+                        }
+                        if end_idx < 0 {
+                            end_idx = 0;
+                        }
+                        if start_idx > len {
+                            start_idx = len;
+                        }
+                        if end_idx > len {
+                            end_idx = len;
+                        }
 
                         // 如果 start >= end -> 空
                         if start_idx >= end_idx {
@@ -538,7 +654,9 @@ impl TemplateEngine {
                 "replace" => {
                     if let Some(arg) = &filter_arg {
                         // 参数格式: old,new 或 'old','new' 或 "old","new"
-                        let parts: Vec<String> = if arg.contains("','") || arg.contains('"') && arg.contains(",") && arg.contains('"') {
+                        let parts: Vec<String> = if arg.contains("','")
+                            || arg.contains('"') && arg.contains(",") && arg.contains('"')
+                        {
                             // 处理 'old','new' 或 "old","new" 格式
                             let mut result = Vec::new();
                             let mut in_quote = None;
@@ -570,15 +688,17 @@ impl TemplateEngine {
                         };
 
                         if parts.len() >= 2 {
-                            let old = if (parts[0].starts_with('"') && parts[0].ends_with('"')) ||
-                                (parts[0].starts_with('\'') && parts[0].ends_with('\'')) {
+                            let old = if (parts[0].starts_with('"') && parts[0].ends_with('"'))
+                                || (parts[0].starts_with('\'') && parts[0].ends_with('\''))
+                            {
                                 parts[0][1..parts[0].len() - 1].to_string()
                             } else {
                                 parts[0].clone()
                             };
 
-                            let new = if (parts[1].starts_with('"') && parts[1].ends_with('"')) ||
-                                (parts[1].starts_with('\'') && parts[1].ends_with('\'')) {
+                            let new = if (parts[1].starts_with('"') && parts[1].ends_with('"'))
+                                || (parts[1].starts_with('\'') && parts[1].ends_with('\''))
+                            {
                                 parts[1][1..parts[1].len() - 1].to_string()
                             } else {
                                 parts[1].clone()
@@ -600,7 +720,11 @@ impl TemplateEngine {
                                 // 获取本地时区偏移
                                 let local = Local::now();
                                 // 创建带有时区信息的DateTime
-                                let date_with_timezone = DateTime::<Local>::from_naive_utc_and_offset(naive_date, *local.offset());
+                                let date_with_timezone =
+                                    DateTime::<Local>::from_naive_utc_and_offset(
+                                        naive_date,
+                                        *local.offset(),
+                                    );
                                 // 格式化输出
                                 date_with_timezone.format(arg).to_string()
                             }
@@ -652,7 +776,9 @@ impl TemplateEngine {
                         continue;
                     }
                     '}' if !in_single && !in_double => {
-                        if depth > 0 { depth -= 1; }
+                        if depth > 0 {
+                            depth -= 1;
+                        }
                         i += ch_len;
                         continue;
                     }

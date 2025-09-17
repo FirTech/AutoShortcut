@@ -1,10 +1,10 @@
 use aho_corasick::AhoCorasick;
+use anyhow::{anyhow, Result};
 use goblin::pe::options::ParseOptions;
 use goblin::pe::subsystem::IMAGE_SUBSYSTEM_WINDOWS_GUI;
 use goblin::pe::PE;
 use memmap2::Mmap;
 use std::collections::HashMap;
-use std::error::Error;
 use std::ffi::{c_void, OsStr, OsString};
 use std::fs::File;
 use std::io::ErrorKind;
@@ -14,13 +14,27 @@ use std::path::{Path, PathBuf};
 use std::{env, ptr, slice};
 use windows::core::{Interface, BOOL, GUID, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, MAX_PATH};
-use windows::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, VS_FIXEDFILEINFO};
-use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED};
-use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS};
+use windows::Win32::Storage::FileSystem::{
+    GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, VS_FIXEDFILEINFO,
+};
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, IPersistFile,
+    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+};
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+};
 use windows::Win32::System::SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO};
 use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentProcessId, IsWow64Process};
-use windows::Win32::UI::Shell::{ExtractIconExW, FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Favorites, FOLDERID_ProgramFilesX86, FOLDERID_Programs, FOLDERID_QuickLaunch, FOLDERID_SendTo, FOLDERID_StartMenu, FOLDERID_Startup, FOLDERID_System, FOLDERID_Windows, IShellLinkW, SHGetKnownFolderPath, ShellLink, KNOWN_FOLDER_FLAG};
-use windows::Win32::UI::WindowsAndMessaging::{SW_SHOWMAXIMIZED, SW_SHOWMINNOACTIVE, SW_SHOWNORMAL};
+use windows::Win32::UI::Shell::{
+    ExtractIconExW, FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Favorites,
+    FOLDERID_ProgramFilesX86, FOLDERID_Programs, FOLDERID_PublicDesktop, FOLDERID_PublicDocuments,
+    FOLDERID_QuickLaunch, FOLDERID_SendTo, FOLDERID_StartMenu, FOLDERID_Startup, FOLDERID_System,
+    FOLDERID_Windows, IShellLinkW, SHGetKnownFolderPath, ShellLink, KNOWN_FOLDER_FLAG,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    SW_SHOWMAXIMIZED, SW_SHOWMINNOACTIVE, SW_SHOWNORMAL,
+};
 
 /// 创建快捷方式
 ///
@@ -42,24 +56,42 @@ use windows::Win32::UI::WindowsAndMessaging::{SW_SHOWMAXIMIZED, SW_SHOWMINNOACTI
 /// - 窗口状态可以是 `normal`、`maximized`、`minimized`
 ///
 /// [参考文档](https://learn.microsoft.com/en-us/windows/win32/shell/links)
-pub fn create_shortcut(target: &Path, link: &Path, args: Option<String>, icon: Option<(String, i32)>, working_dir: Option<String>, window_state: Option<String>, description: Option<String>) -> Result<(), Box<dyn Error>> {
+pub fn create_shortcut(
+    target: &Path,
+    link: &Path,
+    args: Option<String>,
+    icon: Option<(String, i32)>,
+    working_dir: Option<String>,
+    window_state: Option<String>,
+    description: Option<String>,
+) -> Result<()> {
     unsafe {
         // 初始化 COM（STA 模式）
-        CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok().map_err(|e| format!("CoInitializeEx failed: {}", e))?;
+        CoInitializeEx(None, COINIT_APARTMENTTHREADED)
+            .ok()
+            .map_err(|e| anyhow!("CoInitializeEx failed: {}", e))?;
 
         // 创建 ShellLink COM 对象
         let shell: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)
-            .map_err(|e| format!("CoCreateInstance(IShellLink) failed: {}", e))?;
+            .map_err(|e| anyhow!("CoCreateInstance(IShellLink) failed: {}", e))?;
 
         // SetPath
-        let wt: Vec<u16> = target.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
-        shell.SetPath(PCWSTR(wt.as_ptr())).map_err(|e| format!("IShellLink::SetPath failed: {}", e))?;
+        let wt: Vec<u16> = target
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        shell
+            .SetPath(PCWSTR(wt.as_ptr()))
+            .map_err(|e| anyhow!("IShellLink::SetPath failed: {}", e))?;
 
         // Set arguments
         if let Some(a) = args {
             if !a.is_empty() {
                 let wa: Vec<u16> = a.encode_utf16().chain(std::iter::once(0)).collect();
-                shell.SetArguments(PCWSTR(wa.as_ptr())).map_err(|e| format!("IShellLink::SetArguments failed: {}", e))?;
+                shell
+                    .SetArguments(PCWSTR(wa.as_ptr()))
+                    .map_err(|e| anyhow!("IShellLink::SetArguments failed: {}", e))?;
             }
         }
 
@@ -67,7 +99,9 @@ pub fn create_shortcut(target: &Path, link: &Path, args: Option<String>, icon: O
         if let Some(wd) = working_dir {
             if !wd.is_empty() {
                 let wwd: Vec<u16> = wd.encode_utf16().chain(std::iter::once(0)).collect();
-                shell.SetWorkingDirectory(PCWSTR(wwd.as_ptr())).map_err(|e| format!("IShellLink::SetWorkingDirectory failed: {}", e))?;
+                shell
+                    .SetWorkingDirectory(PCWSTR(wwd.as_ptr()))
+                    .map_err(|e| anyhow!("IShellLink::SetWorkingDirectory failed: {}", e))?;
             }
         }
 
@@ -75,15 +109,23 @@ pub fn create_shortcut(target: &Path, link: &Path, args: Option<String>, icon: O
         if let Some((icon_str, icon_index)) = icon {
             // 解析传入字符串为 PathBuf（不做强制存在性检查）
             let icon_path = Path::new(&icon_str);
-            let wicon: Vec<u16> = icon_path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
-            shell.SetIconLocation(PCWSTR(wicon.as_ptr()), icon_index).map_err(|e| format!("IShellLink::SetIconLocation failed: {}", e))?;
+            let wicon: Vec<u16> = icon_path
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            shell
+                .SetIconLocation(PCWSTR(wicon.as_ptr()), icon_index)
+                .map_err(|e| anyhow!("IShellLink::SetIconLocation failed: {}", e))?;
         }
 
         // Set description
         if let Some(des) = description {
             if !des.is_empty() {
                 let wdes: Vec<u16> = des.encode_utf16().chain(std::iter::once(0)).collect();
-                shell.SetDescription(PCWSTR(wdes.as_ptr())).map_err(|e| format!("IShellLink::SetArguments failed: {}", e))?;
+                shell
+                    .SetDescription(PCWSTR(wdes.as_ptr()))
+                    .map_err(|e| anyhow!("IShellLink::SetDescription failed: {}", e))?;
             }
         }
 
@@ -92,17 +134,25 @@ pub fn create_shortcut(target: &Path, link: &Path, args: Option<String>, icon: O
                 "normal" => SW_SHOWNORMAL,
                 "minimized" => SW_SHOWMINNOACTIVE,
                 "maximized" => SW_SHOWMAXIMIZED,
-                _ => SW_SHOWNORMAL
+                _ => SW_SHOWNORMAL,
             })?;
         }
 
         // Query IPersistFile
-        let persist: IPersistFile = shell.cast().map_err(|e| format!("Query IPersistFile failed: {}", e))?;
+        let persist: IPersistFile = shell
+            .cast()
+            .map_err(|e| anyhow!("Query IPersistFile failed: {}", e))?;
 
         // 保存到 .lnk（link 路径必须是绝对或可写的）
-        let wlink: Vec<u16> = link.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let wlink: Vec<u16> = link
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
         // 第二个参数 bForce? TRUE 表示强制写入
-        persist.Save(PCWSTR(wlink.as_ptr()), BOOL(1).into()).map_err(|e| format!("IPersistFile::Save failed: {}", e))?;
+        persist
+            .Save(PCWSTR(wlink.as_ptr()), BOOL(1).into())
+            .map_err(|e| anyhow!("IPersistFile::Save failed: {}", e))?;
 
         // 释放 COM
         CoUninitialize();
@@ -119,16 +169,27 @@ pub fn create_shortcut(target: &Path, link: &Path, args: Option<String>, icon: O
 /// # 返回值
 /// - `Ok(PathBuf)`: 快捷方式目标路径
 /// - `Err(...)`：获取快捷方式目标路径失败
-pub fn get_shortcut_target(path: &Path) -> Result<PathBuf, Box<dyn Error>> {
+pub fn get_shortcut_target(path: &Path) -> Result<PathBuf> {
     // 初始化 COM
-    unsafe { let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED); }
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+    }
 
     // 创建 ShellLink 对象
-    let shell_link: IShellLinkW = unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)? };
+    let shell_link: IShellLinkW =
+        unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)? };
 
     // 加载 .lnk 文件
-    let wide_path: Vec<u16> = OsStr::new(path.to_string_lossy().as_ref()).encode_wide().chain(Some(0)).collect();
-    unsafe { shell_link.cast::<IPersistFile>()?.Load(PCWSTR(wide_path.as_ptr()), windows::Win32::System::Com::STGM(0))?; }
+    let wide_path: Vec<u16> = OsStr::new(path.to_string_lossy().as_ref())
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    unsafe {
+        shell_link.cast::<IPersistFile>()?.Load(
+            PCWSTR(wide_path.as_ptr()),
+            windows::Win32::System::Com::STGM(0),
+        )?;
+    }
 
     // 获取目标路径
     let mut buffer: [u16; MAX_PATH as usize] = [0; MAX_PATH as usize];
@@ -137,12 +198,18 @@ pub fn get_shortcut_target(path: &Path) -> Result<PathBuf, Box<dyn Error>> {
     }
 
     // 清理 COM
-    unsafe { CoUninitialize(); }
+    unsafe {
+        CoUninitialize();
+    }
 
     let len = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
     if len == 0 {
         // 没有解析出目标路径，把它视为“未找到目标”的错误返回
-        return Err(Box::new(std::io::Error::new(ErrorKind::NotFound, "shortcut target not found or target is empty")));
+        return Err(std::io::Error::new(
+            ErrorKind::NotFound,
+            "shortcut target not found or target is empty",
+        )
+        .into());
     }
 
     // 转换并返回 PathBuf
@@ -157,7 +224,10 @@ pub fn process_env(content: String, config_path: Option<&Path>) -> String {
     // 配置文件相关
     if let Some(path) = config_path {
         // 配置文件目录
-        vars.insert("CurDir".into(), path.parent().unwrap().to_string_lossy().to_string());
+        vars.insert(
+            "CurDir".into(),
+            path.parent().unwrap().to_string_lossy().to_string(),
+        );
         // 配置文件名称
         vars.insert("CurFile".into(), path.to_string_lossy().to_string());
         // 配置文件驱动器
@@ -166,7 +236,14 @@ pub fn process_env(content: String, config_path: Option<&Path>) -> String {
 
     // 程序目录
     if let Some(p) = get_known_folder(&FOLDERID_Windows) {
-        vars.insert("ProgramFiles".into(), p.parent().unwrap().join("Program Files").to_string_lossy().to_string());
+        vars.insert(
+            "ProgramFiles".into(),
+            p.parent()
+                .unwrap()
+                .join("Program Files")
+                .to_string_lossy()
+                .to_string(),
+        );
     }
 
     // 程序目录(32位)
@@ -178,17 +255,25 @@ pub fn process_env(content: String, config_path: Option<&Path>) -> String {
     if let Some(p) = get_known_folder(&FOLDERID_Desktop) {
         vars.insert("Desktop".into(), p.to_string_lossy().to_string());
     }
+    // 公共桌面目录
+    if let Some(p) = get_known_folder(&FOLDERID_PublicDesktop) {
+        vars.insert("PublicDesktop".into(), p.to_string_lossy().to_string());
+    }
     // 程序菜单目录
     if let Some(p) = get_known_folder(&FOLDERID_Programs) {
         vars.insert("Programs".into(), p.to_string_lossy().to_string());
     }
-    // 收藏夹全路径
+    // 收藏夹
     if let Some(p) = get_known_folder(&FOLDERID_Favorites) {
         vars.insert("Favorites".into(), p.to_string_lossy().to_string());
     }
-    // 程序菜单目录
+    // 文档目录
     if let Some(p) = get_known_folder(&FOLDERID_Documents) {
         vars.insert("Personal".into(), p.to_string_lossy().to_string());
+    }
+    // 公共文档目录
+    if let Some(p) = get_known_folder(&FOLDERID_PublicDocuments) {
+        vars.insert("PublicPersonal".into(), p.to_string_lossy().to_string());
     }
     // 发送到目录
     if let Some(p) = get_known_folder(&FOLDERID_SendTo) {
@@ -214,10 +299,16 @@ pub fn process_env(content: String, config_path: Option<&Path>) -> String {
     }
 
     // 替换全部变量
-    let patterns: Vec<String> = vars.keys().map(|key: &String| format!("%{}%", key)).collect();
+    let patterns: Vec<String> = vars
+        .keys()
+        .map(|key: &String| format!("%{}%", key))
+        .collect();
     let replacements: Vec<&str> = vars.values().map(String::as_str).collect();
 
-    let ac = AhoCorasick::builder().ascii_case_insensitive(true).build(patterns).unwrap();
+    let ac = AhoCorasick::builder()
+        .ascii_case_insensitive(true)
+        .build(patterns)
+        .unwrap();
     ac.replace_all(&content, &replacements)
 }
 
@@ -247,12 +338,12 @@ pub fn resolve_relative_path(path: &Path) -> Option<PathBuf> {
 
     // 系统目录
     if let Some(sysroot) = get_known_folder(&FOLDERID_System) {
-        let full_path = &sysroot.join(
-            match is_running_under_wow64() {
+        let full_path = &sysroot
+            .join(match is_running_under_wow64() {
                 Ok(true) => "SysNative",
-                _ => "System32"
-            }
-        ).join(path);
+                _ => "System32",
+            })
+            .join(path);
         if full_path.exists() {
             return Some(sysroot.join("System32"));
         }
@@ -281,7 +372,7 @@ pub fn matches_glob(pattern: &str, filename: &str) -> bool {
         // 前缀匹配 setup*
         (false, true) => filename.starts_with(&pattern[..pattern.len() - 1]),
         // 全匹配 * 或包含匹配 *test*
-        _ => filename.contains(pattern.trim_matches('*'))
+        _ => filename.contains(pattern.trim_matches('*')),
     }
 }
 
@@ -296,16 +387,18 @@ pub fn matches_glob(pattern: &str, filename: &str) -> bool {
 /// # 返回值
 /// - `String`: 替换后的字符串
 pub fn replace_ignore_case(input: &str, pattern: &str, value: &str) -> String {
-    if pattern.is_empty() { return input.to_string(); }
+    if pattern.is_empty() {
+        return input.to_string();
+    }
     let hs_lower = input.to_ascii_lowercase();
     let pat_lower = pattern.to_ascii_lowercase();
     let mut out = String::with_capacity(input.len());
     let mut i = 0usize;
     while let Some(pos) = hs_lower[i..].find(&pat_lower) {
         let found = i + pos;
-        out.push_str(&input[i..found]);     // push unmatched prefix preserving original case
-        out.push_str(value);                      // push replacement (preserve rep case)
-        i = found + pattern.len();                  // advance by pattern length (assumes ASCII len OK)
+        out.push_str(&input[i..found]); // push unmatched prefix preserving original case
+        out.push_str(value); // push replacement (preserve rep case)
+        i = found + pattern.len(); // advance by pattern length (assumes ASCII len OK)
     }
     out.push_str(&input[i..]);
     out
@@ -336,7 +429,8 @@ pub fn is_running_under_wow64() -> Result<bool, windows::core::Error> {
 /// - `SHGetKnownFolderPath`最低支持平台为`Windows Vista`，可通过`YY-Thunks`进行兼容NT5平台
 pub fn get_known_folder(rfid: &GUID) -> Option<PathBuf> {
     unsafe {
-        let ptr: PWSTR = match SHGetKnownFolderPath(rfid as *const GUID, KNOWN_FOLDER_FLAG(0), None) {
+        let ptr: PWSTR = match SHGetKnownFolderPath(rfid as *const GUID, KNOWN_FOLDER_FLAG(0), None)
+        {
             Ok(p) if !p.is_null() => p,
             _ => return None,
         };
@@ -439,15 +533,18 @@ pub fn normalize_app_name(name: &str) -> String {
 }
 
 /// 读取文件的 version resource 到 Vec<u8>
-fn get_version_info_data(path: &Path) -> Result<Vec<u8>, Box<dyn Error>> {
+fn get_version_info_data(path: &Path) -> Result<Vec<u8>> {
     // Convert file path to wide string (UTF-16) null-terminated
-    let wide_path: Vec<u16> = OsStr::new(path.to_string_lossy().as_ref()).encode_wide().chain(Some(0)).collect();
+    let wide_path: Vec<u16> = OsStr::new(path.to_string_lossy().as_ref())
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
 
     // Get size of version info
     let mut dummy: u32 = 0;
     let size = unsafe { GetFileVersionInfoSizeW(PCWSTR(wide_path.as_ptr()), Some(&mut dummy)) };
     if size == 0 {
-        return Err(Box::new(std::io::Error::last_os_error()));
+        return Err(std::io::Error::last_os_error().into());
     }
 
     // Allocate buffer for version info
@@ -465,7 +562,7 @@ fn get_version_info_data(path: &Path) -> Result<Vec<u8>, Box<dyn Error>> {
 }
 
 /// 在 version resource data 中查询指定的字符串字段（例如 "FileDescription", "ProductName", "OriginalFilename"）
-fn query_string_from_version(data: &[u8], field: &str) -> Result<Option<String>, Box<dyn Error>> {
+fn query_string_from_version(data: &[u8], field: &str) -> Result<Option<String>> {
     // 先查询 Translation 列表 (\VarFileInfo\Translation)，取第一个 lang/codepage
     let trans_key: Vec<u16> = OsStr::new("\\VarFileInfo\\Translation")
         .encode_wide()
@@ -490,7 +587,8 @@ fn query_string_from_version(data: &[u8], field: &str) -> Result<Option<String>,
     }
 
     // trans_ptr 指向 WORD[2] 或多个，取第一个（word = u16）
-    let trans_words = unsafe { std::slice::from_raw_parts(trans_ptr as *const u16, (trans_len / 2) as usize) };
+    let trans_words =
+        unsafe { std::slice::from_raw_parts(trans_ptr as *const u16, (trans_len / 2) as usize) };
     if trans_words.len() < 2 {
         return Ok(None);
     }
@@ -498,7 +596,10 @@ fn query_string_from_version(data: &[u8], field: &str) -> Result<Option<String>,
     let codepage = trans_words[1];
 
     // 构造查询字符串，例如: \StringFileInfo\040904E4\FileDescription
-    let subblock = format!("\\StringFileInfo\\{:04x}{:04x}\\{}", lang_id, codepage, field);
+    let subblock = format!(
+        "\\StringFileInfo\\{:04x}{:04x}\\{}",
+        lang_id, codepage, field
+    );
     let wide_subblock: Vec<u16> = OsStr::new(&subblock).encode_wide().chain(Some(0)).collect();
 
     let mut value_ptr: *mut core::ffi::c_void = std::ptr::null_mut();
@@ -515,7 +616,8 @@ fn query_string_from_version(data: &[u8], field: &str) -> Result<Option<String>,
 
     if ok2.as_bool() && !value_ptr.is_null() && value_len > 0 {
         // value_len 是宽字符数（u16），把它转成 Rust String
-        let slice = unsafe { std::slice::from_raw_parts(value_ptr as *const u16, value_len as usize) };
+        let slice =
+            unsafe { std::slice::from_raw_parts(value_ptr as *const u16, value_len as usize) };
         // 寻找 null 终止符（有时 value_len 包含末尾的 0，有时不包含）
         let end = slice.iter().position(|&c| c == 0).unwrap_or(slice.len());
         let s = String::from_utf16(&slice[..end])?;
@@ -526,31 +628,31 @@ fn query_string_from_version(data: &[u8], field: &str) -> Result<Option<String>,
 }
 
 /// 获取exe产品名称
-pub fn get_exe_product_name(path: &Path) -> Result<Option<String>, Box<dyn Error>> {
+pub fn get_exe_product_name(path: &Path) -> Result<Option<String>> {
     let data = get_version_info_data(path)?;
     query_string_from_version(&data, "ProductName")
 }
 
 /// 获取程序描述
-pub fn get_exe_description(path: &Path) -> Result<Option<String>, Box<dyn Error>> {
+pub fn get_exe_description(path: &Path) -> Result<Option<String>> {
     let data = get_version_info_data(path)?;
     query_string_from_version(&data, "FileDescription")
 }
 
 /// 获取exe公司名称
-pub fn get_exe_company_name(path: &Path) -> Result<Option<String>, Box<dyn Error>> {
+pub fn get_exe_company_name(path: &Path) -> Result<Option<String>> {
     let data = get_version_info_data(path)?;
     query_string_from_version(&data, "CompanyName")
 }
 
 /// 获取exe版权信息
-pub fn get_exe_copyright(path: &Path) -> Result<Option<String>, Box<dyn Error>> {
+pub fn get_exe_copyright(path: &Path) -> Result<Option<String>> {
     let data = get_version_info_data(path)?;
     query_string_from_version(&data, "LegalCopyright")
 }
 
 /// 获取exe原始文件名
-pub fn get_exe_original_filename(path: &Path) -> Result<Option<String>, Box<dyn Error>> {
+pub fn get_exe_original_filename(path: &Path) -> Result<Option<String>> {
     let data = get_version_info_data(path)?;
     query_string_from_version(&data, "OriginalFilename")
 }
@@ -568,7 +670,7 @@ pub fn get_exe_original_filename(path: &Path) -> Result<Option<String>, Box<dyn 
 /// # 说明
 /// - 此函数通过查询 PE 文件的版本资源，获取产品版本信息。
 /// - 版本信息通常包含在文件的资源部分，格式为 "Major.Minor.Patch.Build"。
-pub fn get_exe_product_version(path: &Path) -> Result<Option<String>, Box<dyn Error>> {
+pub fn get_exe_product_version(path: &Path) -> Result<Option<String>> {
     let data = get_version_info_data(path)?;
     query_string_from_version(&data, "ProductVersion")
 }
@@ -584,13 +686,18 @@ pub fn get_exe_product_version(path: &Path) -> Result<Option<String>, Box<dyn Er
 /// - `Ok(Some(version_string))`: 如果成功获取到版本号，返回格式为 "Major.Minor.Patch.Build" 的字符串。
 /// - `Ok(None)`: 如果文件没有版本信息，或者无法获取。
 /// - `Err(error)`: 如果在读取或解析过程中发生错误。
-pub fn get_exe_file_version(path: &Path) -> Result<Option<String>, Box<dyn Error>> {
+pub fn get_exe_file_version(path: &Path) -> Result<Option<String>> {
     // 将 Rust Path 转换为 Windows API 所需的宽字符串 (UTF-16)
-    let path_wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let path_wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
 
     // 获取版本信息块的大小
     let mut handle = 0u32;
-    let info_size = unsafe { GetFileVersionInfoSizeW(PCWSTR(path_wide.as_ptr()), Some(&mut handle)) };
+    let info_size =
+        unsafe { GetFileVersionInfoSizeW(PCWSTR(path_wide.as_ptr()), Some(&mut handle)) };
 
     if info_size == 0 {
         // 文件没有版本信息，或者文件不存在/无法访问
@@ -608,7 +715,9 @@ pub fn get_exe_file_version(path: &Path) -> Result<Option<String>, Box<dyn Error
             info_size,
             info_buffer.as_mut_ptr() as *mut std::ffi::c_void,
         )
-    }.is_err() {
+    }
+    .is_err()
+    {
         // 无法获取版本信息
         return Ok(None);
     }
@@ -618,7 +727,10 @@ pub fn get_exe_file_version(path: &Path) -> Result<Option<String>, Box<dyn Error
     let mut value_len = 0u32;
 
     // 查询字符串为 "\\"，表示根信息
-    let query_wide: Vec<u16> = OsStr::new("\\").encode_wide().chain(std::iter::once(0)).collect();
+    let query_wide: Vec<u16> = OsStr::new("\\")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
 
     let success_query = unsafe {
         VerQueryValueW(
@@ -637,12 +749,14 @@ pub fn get_exe_file_version(path: &Path) -> Result<Option<String>, Box<dyn Error
     // 将获取到的指针转换为 VS_FIXEDFILEINFO 结构体
     // 确保返回的长度足够容纳 VS_FIXEDFILEINFO 结构体
     if value_len < std::mem::size_of::<VS_FIXEDFILEINFO>() as u32 {
-        return Err(Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "Returned data too small for VS_FIXEDFILEINFO")));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Returned data too small for VS_FIXEDFILEINFO",
+        )
+        .into());
     }
 
-    let fixed_file_info = unsafe {
-        *(value_ptr as *const VS_FIXEDFILEINFO)
-    };
+    let fixed_file_info = unsafe { *(value_ptr as *const VS_FIXEDFILEINFO) };
 
     // 从 VS_FIXEDFILEINFO 结构体中提取版本组件
     // dwFileVersionMS 包含主版本和次版本 (高 16 位是主版本，低 16 位是次版本)
@@ -686,7 +800,7 @@ pub unsafe fn get_native_arch() -> u16 {
 ///   - 0x8664 → x64
 ///   - 0xAA64 → ARM64
 /// - `Err(...)`：读取或解析失败
-pub fn get_program_arch(program: impl AsRef<Path>) -> Result<u16, Box<dyn Error>> {
+pub fn get_program_arch(program: impl AsRef<Path>) -> Result<u16> {
     // open file and mmap
     let file = File::open(program)?;
     let mmap = unsafe { Mmap::map(&file)? };
@@ -701,20 +815,20 @@ pub fn get_program_arch(program: impl AsRef<Path>) -> Result<u16, Box<dyn Error>
 
     // 解析基本头部
     if mmap.len() < 0x40 {
-        return Err("file too small to be a valid PE".into());
+        return Err(anyhow!("file too small to be a valid PE"));
     }
     let e_lfanew = u32::from_le_bytes(mmap[0x3C..0x40].try_into()?) as usize;
     if mmap.len() < e_lfanew + 4 + 20 {
-        return Err("invalid PE header offset or file truncated".into());
+        return Err(anyhow!("invalid PE header offset or file truncated"));
     }
     if &mmap[e_lfanew..e_lfanew + 4] != b"PE\0\0" {
-        return Err("invalid PE signature".into());
+        return Err(anyhow!("invalid PE signature"));
     }
 
     let coff_off = e_lfanew + 4;
     // machine (u16)
     if mmap.len() < coff_off + 2 {
-        return Err("truncated COFF header".into());
+        return Err(anyhow!("truncated COFF header"));
     }
     let machine = u16::from_le_bytes(mmap[coff_off..coff_off + 2].try_into()?);
     Ok(machine)
@@ -728,7 +842,7 @@ pub fn get_program_arch(program: impl AsRef<Path>) -> Result<u16, Box<dyn Error>
 /// # 返回值
 /// - `Ok(bool)`: 是否为界面程序
 /// - `Err(...)`：读取或解析失败
-pub fn is_gui_program(program: impl AsRef<Path>) -> Result<bool, Box<dyn Error>> {
+pub fn is_gui_program(program: impl AsRef<Path>) -> Result<bool> {
     let file = File::open(program)?;
     let mmap = unsafe { Mmap::map(&file)? };
 
@@ -736,19 +850,20 @@ pub fn is_gui_program(program: impl AsRef<Path>) -> Result<bool, Box<dyn Error>>
     options.parse_attribute_certificates = false;
     options.parse_tls_data = false;
     if let Ok(pe) = PE::parse_with_opts(&mmap, &options) {
-        return Ok(pe.header.optional_header.unwrap().windows_fields.subsystem == IMAGE_SUBSYSTEM_WINDOWS_GUI);
+        return Ok(pe.header.optional_header.unwrap().windows_fields.subsystem
+            == IMAGE_SUBSYSTEM_WINDOWS_GUI);
     }
 
     // 解析基本头部
     if mmap.len() < 0x40 {
-        return Err("file too small to be a valid PE".into());
+        return Err(anyhow!("file too small to be a valid PE"));
     }
     let e_lfanew = u32::from_le_bytes(mmap[0x3C..0x40].try_into()?) as usize;
     if mmap.len() < e_lfanew + 4 + 20 {
-        return Err("invalid PE header offset or file truncated".into());
+        return Err(anyhow!("invalid PE header offset or file truncated"));
     }
     if &mmap[e_lfanew..e_lfanew + 4] != b"PE\0\0" {
-        return Err("invalid PE signature".into());
+        return Err(anyhow!("invalid PE signature"));
     }
     let coff_off = e_lfanew + 4;
     let optional_off = coff_off + 20;
@@ -758,7 +873,9 @@ pub fn is_gui_program(program: impl AsRef<Path>) -> Result<bool, Box<dyn Error>>
         Ok(subsystem == IMAGE_SUBSYSTEM_WINDOWS_GUI)
     } else {
         // optional header truncated: we can't determine subsystem
-        Err("PE optional header too small; cannot determine subsystem".into())
+        Err(anyhow!(
+            "PE optional header too small; cannot determine subsystem"
+        ))
     }
 }
 
@@ -770,7 +887,7 @@ pub fn is_gui_program(program: impl AsRef<Path>) -> Result<bool, Box<dyn Error>>
 /// # 返回值
 /// - `Ok(bool)`: 是否有数字签名
 /// - `Err(...)`：读取或解析失败
-pub fn exe_has_signature(program: impl AsRef<Path>) -> Result<bool, Box<dyn Error>> {
+pub fn exe_has_signature(program: impl AsRef<Path>) -> Result<bool> {
     const IMAGE_DIRECTORY_ENTRY_SECURITY: usize = 4;
 
     let file = File::open(program)?;
@@ -778,7 +895,11 @@ pub fn exe_has_signature(program: impl AsRef<Path>) -> Result<bool, Box<dyn Erro
 
     let pe = PE::parse(&mmap)?;
     if let Some(optional_header) = pe.header.optional_header.as_ref() {
-        if let Some(entry) = optional_header.data_directories.data_directories.get(IMAGE_DIRECTORY_ENTRY_SECURITY) {
+        if let Some(entry) = optional_header
+            .data_directories
+            .data_directories
+            .get(IMAGE_DIRECTORY_ENTRY_SECURITY)
+        {
             // entry: &Option<(usize, DataDirectory)>
             if let Some((_rva, data_dir)) = entry.as_ref() {
                 return Ok(data_dir.size > 0);
@@ -798,12 +919,14 @@ pub fn exe_has_signature(program: impl AsRef<Path>) -> Result<bool, Box<dyn Erro
 /// - `bool`: 是否有图标
 pub fn has_icon_in_program(program: &Path) -> bool {
     // 将 Path 转换为 Windows API 所需的宽字符串 (UTF-16)
-    let path_wide: Vec<u16> = program.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let path_wide: Vec<u16> = program
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
 
     // 获取文件中包含的图标总数
-    let icon_count = unsafe {
-        ExtractIconExW(PCWSTR(path_wide.as_ptr()), -1, None, None, 0)
-    };
+    let icon_count = unsafe { ExtractIconExW(PCWSTR(path_wide.as_ptr()), -1, None, None, 0) };
 
     // 如果返回的图标数量大于 0，则表示存在图标
     icon_count > 0
@@ -821,7 +944,10 @@ pub fn has_icon_in_program(program: &Path) -> bool {
 /// - 如果未指定索引，默认索引为 0
 pub fn parse_icon_spec(raw: &str) -> (String, i32) {
     if let Some((file, idx)) = raw.split_once('#') {
-        (file.trim().to_string(), idx.trim().parse::<i32>().unwrap_or(0))
+        (
+            file.trim().to_string(),
+            idx.trim().parse::<i32>().unwrap_or(0),
+        )
     } else {
         (raw.trim().to_string(), 0)
     }
@@ -840,9 +966,8 @@ pub fn validate_shortcut_name_for_config(name: &str) -> bool {
 
     /// Windows 保留设备名（不区分大小写）
     const RESERVED_NAMES: &[&str] = &[
-        "CON", "PRN", "AUX", "NUL",
-        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     ];
 
     // 不能为空或全空白
@@ -884,11 +1009,18 @@ pub fn validate_shortcut_name_for_config(name: &str) -> bool {
 /// - 替换文件名不允许的字符（<>:"/\\|?* 等 -> '-'），把 & 替为空格
 /// - 合并多空格并 Trim
 pub fn sanitize_description(raw: &str) -> Option<String> {
-    if raw.trim().is_empty() { return None; }
+    if raw.trim().is_empty() {
+        return None;
+    }
 
     // 初步过滤控制字符与 NUL
-    let mut s: String = raw.chars().filter(|c| *c != '\0' && !c.is_control()).collect();
-    if s.trim().is_empty() { return None; }
+    let mut s: String = raw
+        .chars()
+        .filter(|c| *c != '\0' && !c.is_control())
+        .collect();
+    if s.trim().is_empty() {
+        return None;
+    }
 
     // 小写用于若干快速检测
     let low = s.to_ascii_lowercase();
@@ -897,11 +1029,14 @@ pub fn sanitize_description(raw: &str) -> Option<String> {
         || low.contains("todo:")
         || low.contains("7z setup sfx")
         || low.contains("7-zip sfx")
+        || low.contains("7zS.sfx")
         || low.starts_with("http://")
         || low.starts_with("https://")
         || low.starts_with("www.")
         || low.starts_with("易语言程序")
-        || low.starts_with('@') {
+        || low.starts_with('@')
+        || low.starts_with("QQ：")
+    {
         return None;
     }
 
@@ -915,11 +1050,14 @@ pub fn sanitize_description(raw: &str) -> Option<String> {
     s = strip_trailing_version_like(s, 3);
 
     // 替换非法文件名字符，保留中文/字母/数字/空格/括号
-    let mut mapped: String = s.chars().map(|c| match c {
-        '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' | ';' => '-',
-        '&' => ' ',
-        other => other,
-    }).collect();
+    let mut mapped: String = s
+        .chars()
+        .map(|c| match c {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' | ';' => '-',
+            '&' => ' ',
+            other => other,
+        })
+        .collect();
 
     // 删除商标/注册符号
     for ch in &['®', '™', '©'] {
@@ -927,7 +1065,8 @@ pub fn sanitize_description(raw: &str) -> Option<String> {
     }
 
     // 去掉首尾多余标点（常见垃圾）
-    mapped = mapped.trim()
+    mapped = mapped
+        .trim()
         .trim_matches(|c: char| ".-–—:;、，。.\\/([{_".contains(c))
         .to_string();
 
@@ -935,7 +1074,11 @@ pub fn sanitize_description(raw: &str) -> Option<String> {
     let final_s = mapped.split_whitespace().collect::<Vec<_>>().join(" ");
     let final_s = final_s.trim().to_string();
 
-    if final_s.is_empty() { None } else { Some(final_s) }
+    if final_s.is_empty() {
+        None
+    } else {
+        Some(final_s)
+    }
 }
 
 /// 删除字符串中的 URL（简单策略：定位常见前缀并删除到下一个空白或结尾）
@@ -961,8 +1104,14 @@ fn strip_by_like(src: &str) -> String {
     let mut s = src.to_string();
     let lower = s.to_ascii_lowercase();
     // 常见的 "by" 前置符形式
-    let patterns = [" by ", " by:", "-by ", "_by ", "—by ", "–by ", " -by ", " - by ", "·by "];
-    if let Some(pos) = patterns.iter().filter_map(|pat| lower.find(pat).map(|p| (p, *pat))).min_by_key(|(p, _)| *p) {
+    let patterns = [
+        " by ", " by:", "-by ", "_by ", "—by ", "–by ", " -by ", " - by ", "·by ",
+    ];
+    if let Some(pos) = patterns
+        .iter()
+        .filter_map(|pat| lower.find(pat).map(|p| (p, *pat)))
+        .min_by_key(|(p, _)| *p)
+    {
         let (p, _pat) = pos;
         s.truncate(p);
         return s.trim_end().to_string();
@@ -972,18 +1121,26 @@ fn strip_by_like(src: &str) -> String {
 
 /// 从尾部按分隔符逐段剥离版本 / 架构 / 日期等“像版本”的片段
 fn strip_trailing_version_like(mut s: String, max_segments: usize) -> String {
-    if s.is_empty() { return s; }
+    if s.is_empty() {
+        return s;
+    }
 
     // 常用分隔符（包括长横线）
     const SEPS: &[char] = &[' ', '-', '_', '.', '–', '—'];
 
     for _ in 0..max_segments {
         // 先 trim 末尾的空白和多余标点
-        s = s.trim_end_matches(|c: char| ".:;、，。.\\/([{_".contains(c) || c.is_whitespace()).to_string();
-        if s.is_empty() { break; }
+        s = s
+            .trim_end_matches(|c: char| ".:;、，。.\\/([{_".contains(c) || c.is_whitespace())
+            .to_string();
+        if s.is_empty() {
+            break;
+        }
 
         // 找到最后一个分隔符位置（按 char 边界）
-        if let Some((sep_idx, _sep_char)) = s.char_indices().rev().find(|&(_, ch)| SEPS.contains(&ch)) {
+        if let Some((sep_idx, _sep_char)) =
+            s.char_indices().rev().find(|&(_, ch)| SEPS.contains(&ch))
+        {
             // 计算 last_segment 开始的字节索引
             let after_sep_start = sep_idx + s[sep_idx..].chars().next().unwrap().len_utf8();
             let last_segment = s[after_sep_start..].trim();
@@ -994,7 +1151,10 @@ fn strip_trailing_version_like(mut s: String, max_segments: usize) -> String {
                 continue;
             }
 
-            if is_version_like(last_segment) || is_bitness_like(last_segment) || is_date_like(last_segment) {
+            if is_version_like(last_segment)
+                || is_bitness_like(last_segment)
+                || is_date_like(last_segment)
+            {
                 // 去掉从分隔符到末尾
                 s.truncate(sep_idx);
                 s = s.trim_end().to_string();
@@ -1015,8 +1175,12 @@ fn strip_trailing_version_like(mut s: String, max_segments: usize) -> String {
 /// 判断 token 是否像版本号（v1.2.3, 1.2, 1.2.3.4 等）
 /// 允许前导 'v' 或 'V'，允许后缀如 rc/alpha/beta，但总体需包含数字与点
 fn is_version_like(tok: &str) -> bool {
-    let t = tok.trim().trim_matches(|c: char| c == '(' || c == ')' || c == '[' || c == ']' || c == ',');
-    if t.is_empty() { return false; }
+    let t = tok
+        .trim()
+        .trim_matches(|c: char| c == '(' || c == ')' || c == '[' || c == ']' || c == ',');
+    if t.is_empty() {
+        return false;
+    }
 
     let mut s = t;
     if s.len() > 1 && (s.starts_with('v') || s.starts_with('V')) {
@@ -1048,15 +1212,32 @@ fn is_version_like(tok: &str) -> bool {
 /// 判断 token 是否像位数/架构标注（x64, x86, 64bit, 64 位, arm64 等）
 fn is_bitness_like(tok: &str) -> bool {
     let t = tok.to_ascii_lowercase();
-    let clean = t.chars().filter(|c| c.is_alphanumeric()).collect::<String>();
+    let clean = t
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect::<String>();
     matches!(
         clean.as_str(),
-        "x64" | "x86" | "x32" | "arm64" | "arm" | "arm32" | "arm64ec" | "64bit" | "32bit" | "64bitx" | "32bitx"
-    ) || clean.ends_with("bit") || clean.ends_with("位")
+        "x64"
+            | "x86"
+            | "x32"
+            | "arm64"
+            | "arm"
+            | "arm32"
+            | "arm64ec"
+            | "64bit"
+            | "32bit"
+            | "64bitx"
+            | "32bitx"
+    ) || clean.ends_with("bit")
+        || clean.ends_with("位")
 }
 
 /// 判断 token 是否像日期（纯数字且长度在6~8）
 fn is_date_like(tok: &str) -> bool {
-    let s = tok.chars().filter(|c| c.is_ascii_digit()).collect::<String>();
+    let s = tok
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .collect::<String>();
     (s.len() >= 6 && s.len() <= 8) && s.len() == tok.chars().filter(|c| c.is_ascii_digit()).count()
 }

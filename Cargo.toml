@@ -29,6 +29,7 @@ memmap2 = "0.9.8"
 rust-i18n = "3"
 sys-locale = "0.3.2"
 chrono = "0.4.41"
+anyhow = "1.0.99"
 
 [dependencies.windows]
 version = "0.61.3"

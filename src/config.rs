@@ -1,10 +1,10 @@
 use crate::console::{write_console, ConsoleType};
 use crate::utils::process_env;
 use crate::DEBUG;
+use anyhow::Result;
 use rust_i18n::t;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::error::Error;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -12,7 +12,8 @@ use std::sync::atomic::Ordering;
 use toml::{Table, Value};
 
 /// 默认名称模板
-pub const DEFAULT_NAME_TEMPLATE: &str = "{product ? product : {desc ? desc : {orig_filename ? orig_filename : stem}}}";
+pub const DEFAULT_NAME_TEMPLATE: &str =
+    "{product ? product : {desc ? desc : {orig_filename ? orig_filename : stem}}}";
 
 fn default_name_template() -> Option<String> {
     Some(DEFAULT_NAME_TEMPLATE.to_string())
@@ -183,15 +184,14 @@ impl ConfigInfo {
     /// * `path` - 配置文件路径
     ///
     /// # 返回值
-    ///
-    /// * `Result<ConfigInfo, Box<dyn Error>>` - 配置信息
-    pub fn parse_config_file(path: &Path) -> Result<ConfigInfo, Box<dyn Error>> {
+    pub fn parse_config_file(path: &Path) -> Result<ConfigInfo> {
         // 读取配置
         let mut config_content = String::new();
         File::open(path)?.read_to_string(&mut config_content)?;
 
         // 判断是否启用转义
-        let enable_escape = config_content.lines()
+        let enable_escape = config_content
+            .lines()
             .filter(|line| !line.trim_start().starts_with('#')) // 跳过注释行
             .any(|line| line.replace(" ", "").contains("enable_escape=true"));
         config_content = if enable_escape {
@@ -203,9 +203,9 @@ impl ConfigInfo {
             // 将所有双引号内的Windows路径中的反斜杠进行特殊处理
             let mut result = String::new();
             let mut in_quotes = false;
-            let mut chars = config_content.chars().peekable();
+            let chars = config_content.chars().peekable();
 
-            while let Some(c) = chars.next() {
+            for c in chars {
                 if c == '"' {
                     in_quotes = !in_quotes;
                     result.push(c);
@@ -224,44 +224,62 @@ impl ConfigInfo {
         let mut config: ConfigInfo = toml::from_str(&config_content)?;
 
         // 处理 Toml 映射表
-        if !config.name.is_empty() || !config.args.is_empty() || !config.icon.is_empty() || !config.dest.is_empty() {
+        if !config.name.is_empty()
+            || !config.args.is_empty()
+            || !config.icon.is_empty()
+            || !config.dest.is_empty()
+        {
             let mut map: BTreeMap<String, Lnk> = BTreeMap::new();
             for item in config.shortcut.drain(..) {
                 map.insert(item.exec.clone(), item);
             }
             // 按 name 映射
             for (exe, alias) in &config.name {
-                let e = map.entry(exe.clone()).or_insert_with(|| Lnk::new(exe.clone()));
+                let e = map
+                    .entry(exe.clone())
+                    .or_insert_with(|| Lnk::new(exe.clone()));
                 e.name = alias.as_str().map(|s| s.to_string());
             }
             // 按 work_dir 映射
             for (exe, work_dir) in &config.work_dir {
-                let e = map.entry(exe.clone()).or_insert_with(|| Lnk::new(exe.clone()));
+                let e = map
+                    .entry(exe.clone())
+                    .or_insert_with(|| Lnk::new(exe.clone()));
                 e.work_dir = work_dir.as_str().map(|s| s.to_string());
             }
             // 按 args 映射
             for (exe, args) in &config.args {
-                let e = map.entry(exe.clone()).or_insert_with(|| Lnk::new(exe.clone()));
+                let e = map
+                    .entry(exe.clone())
+                    .or_insert_with(|| Lnk::new(exe.clone()));
                 e.args = args.as_str().map(|s| s.to_string());
             }
             // 按 icon 映射
             for (exe, ic) in &config.icon {
-                let e = map.entry(exe.clone()).or_insert_with(|| Lnk::new(exe.clone()));
+                let e = map
+                    .entry(exe.clone())
+                    .or_insert_with(|| Lnk::new(exe.clone()));
                 e.icon = ic.as_str().map(|s| s.to_string());
             }
             // 按 dest 映射
             for (exe, dest) in &config.dest {
-                let e = map.entry(exe.clone()).or_insert_with(|| Lnk::new(exe.clone()));
+                let e = map
+                    .entry(exe.clone())
+                    .or_insert_with(|| Lnk::new(exe.clone()));
                 e.dest = dest.as_str().map(|s| s.to_string());
             }
             // 按 window_state 映射
             for (exe, window_state) in &config.window_state {
-                let e = map.entry(exe.clone()).or_insert_with(|| Lnk::new(exe.clone()));
+                let e = map
+                    .entry(exe.clone())
+                    .or_insert_with(|| Lnk::new(exe.clone()));
                 e.window_state = window_state.as_str().map(|s| s.to_string());
             }
             // 按 comment 映射
             for (exe, comment) in &config.comment {
-                let e = map.entry(exe.clone()).or_insert_with(|| Lnk::new(exe.clone()));
+                let e = map
+                    .entry(exe.clone())
+                    .or_insert_with(|| Lnk::new(exe.clone()));
                 e.comment = comment.as_str().map(|s| s.to_string());
             }
             config.shortcut = map.into_values().collect();
@@ -308,7 +326,8 @@ impl Lnk {
             } else {
                 program_path.parent().unwrap().join(&exec_cfg)
             };
-            expected.to_string_lossy().to_ascii_lowercase() == program_path.to_string_lossy().to_ascii_lowercase()
+            expected.to_string_lossy().to_ascii_lowercase()
+                == program_path.to_string_lossy().to_ascii_lowercase()
         }) {
             return Some(kw.clone());
         }
