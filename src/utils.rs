@@ -27,9 +27,11 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 use windows::Win32::System::SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO};
 use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentProcessId, IsWow64Process};
 use windows::Win32::UI::Shell::{
-    ExtractIconExW, FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Favorites,
-    FOLDERID_ProgramFilesX86, FOLDERID_Programs, FOLDERID_PublicDesktop, FOLDERID_PublicDocuments,
-    FOLDERID_QuickLaunch, FOLDERID_SendTo, FOLDERID_StartMenu, FOLDERID_Startup, FOLDERID_System,
+    ExtractIconExW, FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads, FOLDERID_Favorites,
+    FOLDERID_Music, FOLDERID_Pictures, FOLDERID_ProgramFilesX86, FOLDERID_Programs
+    , FOLDERID_PublicDesktop, FOLDERID_PublicDocuments, FOLDERID_PublicDownloads,
+    FOLDERID_PublicMusic, FOLDERID_PublicPictures, FOLDERID_PublicVideos, FOLDERID_QuickLaunch,
+    FOLDERID_SendTo, FOLDERID_StartMenu, FOLDERID_Startup, FOLDERID_System, FOLDERID_Videos,
     FOLDERID_Windows, IShellLinkW, SHGetKnownFolderPath, ShellLink, KNOWN_FOLDER_FLAG,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -221,7 +223,7 @@ pub fn get_shortcut_target(path: &Path) -> Result<PathBuf> {
 pub fn process_env(content: String, config_path: Option<&Path>) -> String {
     let mut vars = HashMap::new();
 
-    // 配置文件相关
+    // 配置文件相关变量
     if let Some(path) = config_path {
         // 配置文件目录
         vars.insert(
@@ -234,7 +236,7 @@ pub fn process_env(content: String, config_path: Option<&Path>) -> String {
         vars.insert("CurDrv".into(), path.to_string_lossy()[..2].to_string());
     }
 
-    // 程序目录
+    // 程序目录(64位)
     if let Some(p) = get_known_folder(&FOLDERID_Windows) {
         vars.insert(
             "ProgramFiles".into(),
@@ -245,7 +247,6 @@ pub fn process_env(content: String, config_path: Option<&Path>) -> String {
                 .to_string(),
         );
     }
-
     // 程序目录(32位)
     if let Some(p) = get_known_folder(&FOLDERID_ProgramFilesX86) {
         vars.insert("ProgramFiles(x86)".into(), p.to_string_lossy().to_string());
@@ -255,15 +256,23 @@ pub fn process_env(content: String, config_path: Option<&Path>) -> String {
     if let Some(p) = get_known_folder(&FOLDERID_Desktop) {
         vars.insert("Desktop".into(), p.to_string_lossy().to_string());
     }
-    // 公共桌面目录
-    if let Some(p) = get_known_folder(&FOLDERID_PublicDesktop) {
-        vars.insert("PublicDesktop".into(), p.to_string_lossy().to_string());
+    // 下载目录
+    if let Some(p) = get_known_folder(&FOLDERID_Downloads) {
+        vars.insert("Downloads".into(), p.to_string_lossy().to_string());
     }
-    // 程序菜单目录
-    if let Some(p) = get_known_folder(&FOLDERID_Programs) {
-        vars.insert("Programs".into(), p.to_string_lossy().to_string());
+    // 视频目录
+    if let Some(p) = get_known_folder(&FOLDERID_Videos) {
+        vars.insert("Videos".into(), p.to_string_lossy().to_string());
     }
-    // 收藏夹
+    // 图片目录
+    if let Some(p) = get_known_folder(&FOLDERID_Pictures) {
+        vars.insert("Pictures".into(), p.to_string_lossy().to_string());
+    }
+    // 音乐目录
+    if let Some(p) = get_known_folder(&FOLDERID_Music) {
+        vars.insert("Music".into(), p.to_string_lossy().to_string());
+    }
+    // 收藏夹目录
     if let Some(p) = get_known_folder(&FOLDERID_Favorites) {
         vars.insert("Favorites".into(), p.to_string_lossy().to_string());
     }
@@ -271,9 +280,35 @@ pub fn process_env(content: String, config_path: Option<&Path>) -> String {
     if let Some(p) = get_known_folder(&FOLDERID_Documents) {
         vars.insert("Personal".into(), p.to_string_lossy().to_string());
     }
+
+    // 公共桌面目录
+    if let Some(p) = get_known_folder(&FOLDERID_PublicDesktop) {
+        vars.insert("PublicDesktop".into(), p.to_string_lossy().to_string());
+    }
+    // 公共下载目录
+    if let Some(p) = get_known_folder(&FOLDERID_PublicDownloads) {
+        vars.insert("PublicDownloads".into(), p.to_string_lossy().to_string());
+    }
+    // 公共视频目录
+    if let Some(p) = get_known_folder(&FOLDERID_PublicVideos) {
+        vars.insert("PublicVideos".into(), p.to_string_lossy().to_string());
+    }
+    // 公共图片目录
+    if let Some(p) = get_known_folder(&FOLDERID_PublicPictures) {
+        vars.insert("PublicPictures".into(), p.to_string_lossy().to_string());
+    }
+    // 公共音乐目录
+    if let Some(p) = get_known_folder(&FOLDERID_PublicMusic) {
+        vars.insert("PublicMusic".into(), p.to_string_lossy().to_string());
+    }
     // 公共文档目录
     if let Some(p) = get_known_folder(&FOLDERID_PublicDocuments) {
         vars.insert("PublicPersonal".into(), p.to_string_lossy().to_string());
+    }
+
+    // 程序菜单目录
+    if let Some(p) = get_known_folder(&FOLDERID_Programs) {
+        vars.insert("Programs".into(), p.to_string_lossy().to_string());
     }
     // 发送到目录
     if let Some(p) = get_known_folder(&FOLDERID_SendTo) {
@@ -455,8 +490,10 @@ fn get_parent_pid(pid: u32) -> windows::core::Result<u32> {
         if h.is_invalid() {
             return Err(windows::core::Error::from_win32());
         }
-        let mut entry = PROCESSENTRY32W::default();
-        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
 
         // 枚举第一个
         Process32FirstW(h, &mut entry)?;
@@ -481,8 +518,10 @@ fn get_process_name(pid: u32) -> windows::core::Result<String> {
         if h.is_invalid() {
             return Err(windows::core::Error::from_win32());
         }
-        let mut entry = PROCESSENTRY32W::default();
-        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
 
         Process32FirstW(h, &mut entry)?;
         loop {
@@ -994,7 +1033,7 @@ pub fn validate_shortcut_name_for_config(name: &str) -> bool {
     // 例如 "CON", "con.txt" 都视为保留名
     let upper = name.to_ascii_uppercase();
     let base = upper.split('.').next().unwrap_or(&upper);
-    if RESERVED_NAMES.iter().any(|&r| r == base) {
+    if RESERVED_NAMES.contains(&base) {
         return false;
     }
 

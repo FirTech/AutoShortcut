@@ -1038,36 +1038,6 @@ fn find_software_best_exe(
             //     }
             // }
 
-            // 判断文件名包含排除功能关键词
-            let exclude_keyword = [
-                "uninst",
-                "uninstall",
-                "unins",
-                "updater",
-                "config",
-                "server",
-                "diagnostics",
-                "service",
-                "crashhandler",
-                "helper",
-                "卸载",
-            ];
-
-            for exclude in exclude_keyword {
-                if file_path
-                    .file_name()
-                    .unwrap()
-                    .to_ascii_lowercase()
-                    .to_str()
-                    .unwrap()
-                    .contains(exclude)
-                {
-                    score -= 50;
-                    breakdown.push(("exclude_keyword", -50));
-                    break;
-                }
-            }
-
             if DEBUG.load(Ordering::Relaxed) {
                 let details = breakdown
                     .iter()

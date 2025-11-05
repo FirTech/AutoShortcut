@@ -326,14 +326,24 @@ AutoShortcut.exe [选项] ["程序路径"] ["快捷方式路径"] [--config "配
 |      `%CurDir%`       | 配置文件目录     |
 |      `%CurFile%`      | 配置文件名称     |
 |      `%CurDrv%`       | 配置文件驱动器    |
-|     `%Favorites%`     | 收藏夹全路径     |
 |     `%Personal%`      | 我的文档目录     |
 |     `%Programs%`      | 程序菜单目录     |
 |      `%SendTo%`       | 发送到目录      |
 |     `%StartMenu%`     | 开始菜单目录     |
 |      `%Startup%`      | 启动菜单目录     |
 |    `%QuickLaunch%`    | 快速启动栏      |
-|      `%Desktop%`      | 桌面目录名      |
+|      `%Desktop%`      | 桌面目录       |
+|     `%Downloads%`     | 下载目录       |
+|      `%Videos%`       | 视频目录       |
+|     `%Pictures%`      | 图片目录       |
+|       `%Music%`       | 音乐目录       |
+|     `%Favorites%`     | 收藏夹目录      |
+|   `%PublicDesktop%`   | 公共桌面目录     |
+|  `%PublicDownloads%`  | 公共下载目录     |
+|   `%PublicVideos%`    | 公共视频目录     |
+|  `%PublicPictures%`   | 公共图片目录     |
+|    `%PublicMusic%`    | 公共音乐目录     |
+|  `%PublicPersonal%`   | 公共文档目录     |
 |   `%ProgramFiles%`    | 程序目录       |
 | `%ProgramFiles(x86)%` | 程序目录（32 位） |
 
@@ -547,7 +557,7 @@ shortcut = [
 config.toml
 
 ```toml
-ignore = ["temp"]
+ignore = ["Common Files", "Internet Explorer", "Windows Defender", "Windows Mail", "Windows Media Player", "Windows NT", "Windows Photo Viewer", "Windows Security", "EdgeCore", "EdgeUpdate", "WindowsApps", "dotnet"]
 scripts = ["*.cmd", "*.bat"]
 shortcut = [
     { exec = "WeChat.exe", name = "微信" },
