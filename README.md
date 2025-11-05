@@ -1,5 +1,7 @@
 # AutoShortcut
 
+[简体中文](README.zh.md) [English](README.md)
+
 ## Introduction
 
 `AutoShortcut` is an automated shortcut creation tool. Designed for efficient management of software shortcuts. It can
