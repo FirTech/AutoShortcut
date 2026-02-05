@@ -249,6 +249,7 @@ AutoShortcut.exe [选项] ["程序路径"] ["快捷方式路径"] [--config "配
 |     `dest`     | 快捷方式存放路径                                                     |
 | `window_state` | 显示模式：`normal`（激活并显示） / `minimized`（最大化） / `maximized`（最小化）   |
 |   `comment`    | 备注                                                           |
+|    `hotkey`    | 快捷键，格式如 "Ctrl + Alt + N"                                         |
 
 - 配置项模式
 
@@ -263,11 +264,13 @@ AutoShortcut.exe [选项] ["程序路径"] ["快捷方式路径"] [--config "配
   dest = "快捷方式位置"
   window_state = "显示模式"
   comment = "备注"
+  hotkey = "快捷键"
 
   # 示例
   [[shortcut]]
   name = "Everything"
   exec = "Everything.exe"
+  hotkey = "Ctrl + Alt + E"
   ```
 
 - 内联模式
@@ -277,9 +280,9 @@ AutoShortcut.exe [选项] ["程序路径"] ["快捷方式路径"] [--config "配
   ```toml
   shortcut = [
     # 此处配置仅为字段说明
-    { name = "快捷方式名称", exec = "程序路径", work_dir="起始位置", args = "命令行参数", icon = "图标路径", dest = "快捷方式位置" },
+    { name = "快捷方式名称", exec = "程序路径", work_dir="起始位置", args = "命令行参数", icon = "图标路径", dest = "快捷方式位置", hotkey = "快捷键" },
     # 示例
-    { name = "Everything", exec = "Everything.exe" },
+    { name = "Everything", exec = "Everything.exe", hotkey = "Ctrl + Alt + E" },
   ]
   ```
 
@@ -315,6 +318,12 @@ AutoShortcut.exe [选项] ["程序路径"] ["快捷方式路径"] [--config "配
   "程序路径" = "备注"
   # 示例
   "Everything.exe" = "文件搜索"
+
+  # 配置快捷方式快捷键
+  [hotkey]
+  "程序路径" = "快捷键"
+  # 示例
+  "Everything.exe" = "Ctrl + Alt + E"
   ```
 
 ### 支持内置变量
@@ -527,12 +536,12 @@ shortcut = [
 
 ### 基础配置示例
 
-- 配置快捷方式名称
+- 配置快捷方式名称和快捷键
 
   ```toml
   shortcut = [
-    { name = "文件搜索", exec = "Everything.exe"},
-    { name = "文件复制", exec = "FastCopy.exe"},
+    { name = "文件搜索", exec = "Everything.exe", hotkey = "Ctrl + Alt + E" },
+    { name = "文件复制", exec = "FastCopy.exe", hotkey = "Ctrl + Shift + F" },
   ]
   ```
 

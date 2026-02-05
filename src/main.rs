@@ -15,8 +15,8 @@ use crate::template::process_template;
 use crate::utils::{
     create_shortcut, exe_has_signature, get_exe_description, get_native_arch, get_program_arch,
     get_shortcut_target, has_icon_in_program, is_gui_program, is_running_under_wow64,
-    launched_from_explorer, matches_glob, normalize_app_name, parse_icon_spec, replace_ignore_case,
-    resolve_relative_path, validate_shortcut_name_for_config,
+    launched_from_explorer, matches_glob, normalize_app_name, parse_hotkey, parse_icon_spec,
+    replace_ignore_case, resolve_relative_path, validate_shortcut_name_for_config,
 };
 use anyhow::{anyhow, Result};
 use clap::Parser;
@@ -1649,6 +1649,21 @@ fn create_program_shortcut(
                 })
             });
 
+    // 快捷键解析
+    let hotkey: Option<u16> = lnk_info
+        .as_ref()
+        .and_then(|li| li.hotkey.as_ref())
+        .and_then(|hotkey_str| match parse_hotkey(hotkey_str) {
+            Ok(hk) => Some(hk),
+            Err(_e) => {
+                write_console(
+                    ConsoleType::Warning,
+                    &t!("config.invalid_hotkey", hotkey = hotkey_str),
+                );
+                None
+            }
+        });
+
     // 检测是否存在同名快捷方式
     let current_shortcut = dest.join(format!("{}.lnk", name));
     if current_shortcut.exists() {
@@ -1713,6 +1728,7 @@ fn create_program_shortcut(
         work_dir,
         window_state,
         comment,
+        hotkey,
     )?;
     Ok((name.clone(), dest.join(format!("{}.lnk", name))))
 }

@@ -89,6 +89,10 @@ pub struct ConfigInfo {
     /// 映射表: 备注
     #[serde(default)]
     comment: Table,
+
+    /// 映射表: 快捷键
+    #[serde(default)]
+    hotkey: Table,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -159,6 +163,10 @@ pub struct Lnk {
     /// 备注
     #[serde(default)]
     pub comment: Option<String>,
+
+    /// 快捷键配置
+    #[serde(default)]
+    pub hotkey: Option<String>,
 }
 
 impl Lnk {
@@ -172,6 +180,7 @@ impl Lnk {
             work_dir: None,
             window_state: None,
             comment: None,
+            hotkey: None,
         }
     }
 }
@@ -228,6 +237,7 @@ impl ConfigInfo {
             || !config.args.is_empty()
             || !config.icon.is_empty()
             || !config.dest.is_empty()
+            || !config.hotkey.is_empty()
         {
             let mut map: BTreeMap<String, Lnk> = BTreeMap::new();
             for item in config.shortcut.drain(..) {
@@ -281,6 +291,13 @@ impl ConfigInfo {
                     .entry(exe.clone())
                     .or_insert_with(|| Lnk::new(exe.clone()));
                 e.comment = comment.as_str().map(|s| s.to_string());
+            }
+            // 按 hotkey 映射
+            for (exe, hotkey_val) in &config.hotkey {
+                let e = map
+                    .entry(exe.clone())
+                    .or_insert_with(|| Lnk::new(exe.clone()));
+                e.hotkey = hotkey_val.as_str().map(|s| s.to_string());
             }
             config.shortcut = map.into_values().collect();
         }

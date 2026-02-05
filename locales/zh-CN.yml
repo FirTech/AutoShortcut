@@ -14,6 +14,7 @@ config:
   miss_dest: "配置缺少 `dest` 字段: %{path}"
   shortcut_missing: "[未找到快捷方式配置] %{path}"
   invalid_name: "配置中的快捷方式名称\"%{name}\"无效"
+  invalid_hotkey: "配置中的快捷键\"%{hotkey}\"无效"
 
 file:
   access_failed: "[访问失败] %{error}"

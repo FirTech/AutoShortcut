@@ -1,5 +1,5 @@
 use aho_corasick::AhoCorasick;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use goblin::pe::options::ParseOptions;
 use goblin::pe::subsystem::IMAGE_SUBSYSTEM_WINDOWS_GUI;
 use goblin::pe::PE;
@@ -28,8 +28,8 @@ use windows::Win32::System::SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO
 use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentProcessId, IsWow64Process};
 use windows::Win32::UI::Shell::{
     ExtractIconExW, FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads, FOLDERID_Favorites,
-    FOLDERID_Music, FOLDERID_Pictures, FOLDERID_ProgramFilesX86, FOLDERID_Programs
-    , FOLDERID_PublicDesktop, FOLDERID_PublicDocuments, FOLDERID_PublicDownloads,
+    FOLDERID_Music, FOLDERID_Pictures, FOLDERID_ProgramFilesX86, FOLDERID_Programs,
+    FOLDERID_PublicDesktop, FOLDERID_PublicDocuments, FOLDERID_PublicDownloads,
     FOLDERID_PublicMusic, FOLDERID_PublicPictures, FOLDERID_PublicVideos, FOLDERID_QuickLaunch,
     FOLDERID_SendTo, FOLDERID_StartMenu, FOLDERID_Startup, FOLDERID_System, FOLDERID_Videos,
     FOLDERID_Windows, IShellLinkW, SHGetKnownFolderPath, ShellLink, KNOWN_FOLDER_FLAG,
@@ -48,6 +48,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// - `working_dir`: 工作目录
 /// - `window_state`: 窗口状态
 /// - `description`: 描述
+/// - `hotkey`: 快捷键 (u16 格式)
 ///
 /// # 返回值
 /// - `Ok(())`: 成功
@@ -56,6 +57,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// # 说明
 /// - 图标路径可以是文件路径或系统图标路径（如 `shell32.dll,0`）
 /// - 窗口状态可以是 `normal`、`maximized`、`minimized`
+/// - 快捷键格式为 (modifiers << 8) | vk_code
 ///
 /// [参考文档](https://learn.microsoft.com/en-us/windows/win32/shell/links)
 pub fn create_shortcut(
@@ -66,6 +68,7 @@ pub fn create_shortcut(
     working_dir: Option<String>,
     window_state: Option<String>,
     description: Option<String>,
+    hotkey: Option<u16>,
 ) -> Result<()> {
     unsafe {
         // 初始化 COM（STA 模式）
@@ -138,6 +141,13 @@ pub fn create_shortcut(
                 "maximized" => SW_SHOWMAXIMIZED,
                 _ => SW_SHOWNORMAL,
             })?;
+        }
+
+        // 设置快捷键
+        if let Some(hk) = hotkey {
+            shell
+                .SetHotkey(hk)
+                .map_err(|e| anyhow!("IShellLink::SetHotkey failed: {}", e))?;
         }
 
         // Query IPersistFile
@@ -217,6 +227,168 @@ pub fn get_shortcut_target(path: &Path) -> Result<PathBuf> {
     // 转换并返回 PathBuf
     let os_str = OsString::from_wide(&buffer[..len]);
     Ok(PathBuf::from(os_str))
+}
+
+/// 解析快捷键字符串为 u16 值
+///
+/// # 参数
+/// - `hotkey_str`: 快捷键字符串，例如 "Alt + L", "Ctrl+Shift+A", "Ctrl + Alt + Delete"
+///
+/// # 返回值
+/// - `Ok(u16)`: 解析后的热键值 (格式: (modifiers << 8) | vk_code)
+/// - `Err(...)`: 格式错误或不支持的键
+///
+/// # 支持的修饰符
+/// - Ctrl/Control: 0x02
+/// - Shift: 0x01
+/// - Alt/Option: 0x04
+/// - Ext: 0x08 (Windows 键)
+///
+/// # 支持的虚拟键码 (低字节)
+/// - 字母 A-Z: 0x41-0x5A
+/// - 数字 0-9: 0x30-0x39
+/// - F1-F24: 0x70-0x87
+/// - 方向键: Left(0x25), Up(0x26), Right(0x27), Down(0x28)
+/// - 常用键: Space(0x20), Enter(0x0D), Esc(0x1B), Tab(0x09), Delete(0x2E), Insert(0x2D), Home(0x24), End(0x23), PageUp(0x21), PageDown(0x22)
+/// - 其他: Backspace(0x08), CapsLock(0x14), ScrollLock(0x91), NumLock(0x90), PrintScreen(0x2A)
+///
+/// # 示例
+/// - "Alt + L" -> 0x044C
+/// - "Ctrl+Shift+A" -> 0x0341
+/// - "Ctrl + Alt + Delete" -> 0x062E
+pub fn parse_hotkey(hotkey_str: &str) -> Result<u16> {
+    // Windows hotkey modifiers (高字节)
+    const HOTKEYF_SHIFT: u16 = 0x01;
+    const HOTKEYF_CONTROL: u16 = 0x02;
+    const HOTKEYF_ALT: u16 = 0x04;
+    const HOTKEYF_EXT: u16 = 0x08; // Windows 键
+
+    // 虚拟键码映射表
+    fn vk_code_from_str(key: &str) -> Option<u16> {
+        let key = key.trim().to_ascii_uppercase();
+
+        // 字母 A-Z
+        if key.len() == 1 && key.as_bytes()[0].is_ascii_alphabetic() {
+            return Some(key.as_bytes()[0] as u16);
+        }
+
+        // 数字 0-9
+        if key.len() == 1 && key.as_bytes()[0].is_ascii_digit() {
+            return Some(key.as_bytes()[0] as u16);
+        }
+
+        match key.as_str() {
+            // 功能键 F1-F24
+            "F1" => Some(0x70),
+            "F2" => Some(0x71),
+            "F3" => Some(0x72),
+            "F4" => Some(0x73),
+            "F5" => Some(0x74),
+            "F6" => Some(0x75),
+            "F7" => Some(0x76),
+            "F8" => Some(0x77),
+            "F9" => Some(0x78),
+            "F10" => Some(0x79),
+            "F11" => Some(0x7A),
+            "F12" => Some(0x7B),
+            "F13" => Some(0x7C),
+            "F14" => Some(0x7D),
+            "F15" => Some(0x7E),
+            "F16" => Some(0x7F),
+            "F17" => Some(0x80),
+            "F18" => Some(0x81),
+            "F19" => Some(0x82),
+            "F20" => Some(0x83),
+            "F21" => Some(0x84),
+            "F22" => Some(0x85),
+            "F23" => Some(0x86),
+            "F24" => Some(0x87),
+
+            // 方向键
+            "LEFT" | "ARROWLEFT" => Some(0x25),
+            "UP" | "ARROWUP" => Some(0x26),
+            "RIGHT" | "ARROWRIGHT" => Some(0x27),
+            "DOWN" | "ARROWDOWN" => Some(0x28),
+
+            // 特殊键
+            "SPACE" => Some(0x20),
+            "ENTER" | "RETURN" => Some(0x0D),
+            "ESC" | "ESCAPE" => Some(0x1B),
+            "TAB" => Some(0x09),
+            "DELETE" | "DEL" => Some(0x2E),
+            "INSERT" | "INS" => Some(0x2D),
+            "HOME" => Some(0x24),
+            "END" => Some(0x23),
+            "PAGEUP" | "PGUP" => Some(0x21),
+            "PAGEDOWN" | "PGDN" => Some(0x22),
+            "BACKSPACE" | "BS" | "BKSP" => Some(0x08),
+
+            // 小键盘
+            "NUMPAD0" => Some(0x60),
+            "NUMPAD1" => Some(0x61),
+            "NUMPAD2" => Some(0x62),
+            "NUMPAD3" => Some(0x63),
+            "NUMPAD4" => Some(0x64),
+            "NUMPAD5" => Some(0x65),
+            "NUMPAD6" => Some(0x66),
+            "NUMPAD7" => Some(0x67),
+            "NUMPAD8" => Some(0x68),
+            "NUMPAD9" => Some(0x69),
+            "MULTIPLY" => Some(0x6A),
+            "ADD" => Some(0x6B),
+            "SUBTRACT" => Some(0x6D),
+            "DECIMAL" => Some(0x6E),
+            "DIVIDE" => Some(0x6F),
+
+            // 其他
+            "CAPSLOCK" => Some(0x14),
+            "SCROLLLOCK" => Some(0x91),
+            "NUMLOCK" => Some(0x90),
+            "PRINTSCREEN" | "PRTSC" => Some(0x2A),
+            "PAUSE" => Some(0x13),
+
+            _ => None,
+        }
+    }
+
+    // 分割输入字符串 (支持 +, 空格, 或组合)
+    let parts: Vec<&str> = hotkey_str
+        .split(&['+', ' ', '\t'][..])
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if parts.is_empty() {
+        bail!("empty hotkey string");
+    }
+
+    let mut modifiers: u16 = 0;
+    let mut main_key: Option<u16> = None;
+
+    for part in &parts {
+        let part_upper = part.to_ascii_uppercase();
+
+        match part_upper.as_str() {
+            "CTRL" | "CONTROL" => modifiers |= HOTKEYF_CONTROL,
+            "SHIFT" => modifiers |= HOTKEYF_SHIFT,
+            "ALT" | "OPTION" => modifiers |= HOTKEYF_ALT,
+            "WIN" | "WINDOWS" | "META" | "CMD" | "COMMAND" => modifiers |= HOTKEYF_EXT,
+            _ => {
+                if main_key.is_some() {
+                    bail!("multiple main keys detected: {}", hotkey_str);
+                }
+                main_key = vk_code_from_str(part);
+                if main_key.is_none() {
+                    bail!("unsupported key: {}", part);
+                }
+            }
+        }
+    }
+
+    let main_key =
+        main_key.ok_or_else(|| anyhow!("no main key found in hotkey: {}", hotkey_str))?;
+
+    Ok((modifiers << 8) | main_key)
 }
 
 /// 替换变量

@@ -14,6 +14,7 @@ config:
   miss_dest: "Configuration entry missing `dest`: %{path}"
   shortcut_missing: "[Shortcut mapping not found] %{path}"
   invalid_name: "Invalid shortcut name '%{name}' in config"
+  invalid_hotkey: "Invalid hotkey '%{hotkey}' in config"
 
 file:
   access_failed: "[Access failed] %{error}"
