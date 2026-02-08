@@ -404,8 +404,8 @@ impl TemplateEngine {
 
                 let condition_result = self.evaluate_condition(condition, context)?;
 
-                if condition_result {
-                    return self.evaluate_expression(true_expr, context);
+                return if condition_result {
+                    self.evaluate_expression(true_expr, context)
                 } else {
                     // 处理假值表达式可能包含的大括号
                     let false_expr_trimmed = false_expr.trim();
@@ -416,8 +416,8 @@ impl TemplateEngine {
                     } else {
                         false_expr_trimmed
                     };
-                    return self.evaluate_expression(false_expr_to_eval, context);
-                }
+                    self.evaluate_expression(false_expr_to_eval, context)
+                };
             }
         }
 
@@ -471,16 +471,8 @@ impl TemplateEngine {
                 filter_name = filter_part[..colon_pos].trim();
                 let arg = &filter_part[colon_pos + 1..].trim();
 
-                // 处理参数可能的引号
-                filter_arg = Some(
-                    if (arg.starts_with('"') && arg.ends_with('"'))
-                        || (arg.starts_with('\'') && arg.ends_with('\''))
-                    {
-                        arg[1..arg.len() - 1].to_string()
-                    } else {
-                        arg.to_string()
-                    },
-                );
+                // 直接使用参数，让各个过滤器自行处理引号（尤其是 replace 需要正确处理引号内的逗号）
+                filter_arg = Some(arg.to_string());
             }
 
             // 应用过滤器
@@ -653,58 +645,15 @@ impl TemplateEngine {
                 // 字符串替换
                 "replace" => {
                     if let Some(arg) = &filter_arg {
-                        // 参数格式: old,new 或 'old','new' 或 "old","new"
-                        let parts: Vec<String> = if arg.contains("','")
-                            || arg.contains('"') && arg.contains(",") && arg.contains('"')
-                        {
-                            // 处理 'old','new' 或 "old","new" 格式
-                            let mut result = Vec::new();
-                            let mut in_quote = None;
-                            let mut start = 0;
-                            let chars: Vec<char> = arg.chars().collect();
-
-                            for (i, c) in chars.iter().enumerate() {
-                                if in_quote.is_none() {
-                                    if *c == '\'' || *c == '"' {
-                                        in_quote = Some(*c);
-                                        start = i;
-                                    }
-                                } else if *c == in_quote.unwrap() && i > 0 && chars[i - 1] != '\\' {
-                                    // 找到一个完整的引号字符串
-                                    result.push(chars[start..i + 1].iter().collect());
-                                    in_quote = None;
-                                }
-                            }
-
-                            // 如果没有找到成对的引号，退回到简单分割
-                            if result.len() < 2 {
-                                arg.splitn(2, ',').map(|s| s.trim().to_string()).collect()
-                            } else {
-                                result
-                            }
-                        } else {
-                            // 处理 old,new 格式
-                            arg.splitn(2, ',').map(|s| s.trim().to_string()).collect()
-                        };
+                        // 手动解析参数，正确处理引号内的逗号
+                        // 支持: old,new, 'old','new', "old","new" 等
+                        let parts = self.parse_quoted_args(arg, ',');
 
                         if parts.len() >= 2 {
-                            let old = if (parts[0].starts_with('"') && parts[0].ends_with('"'))
-                                || (parts[0].starts_with('\'') && parts[0].ends_with('\''))
-                            {
-                                parts[0][1..parts[0].len() - 1].to_string()
-                            } else {
-                                parts[0].clone()
-                            };
-
-                            let new = if (parts[1].starts_with('"') && parts[1].ends_with('"'))
-                                || (parts[1].starts_with('\'') && parts[1].ends_with('\''))
-                            {
-                                parts[1][1..parts[1].len() - 1].to_string()
-                            } else {
-                                parts[1].clone()
-                            };
-
-                            value.replace(&old, &new)
+                            value.replace(&parts[0], &parts[1])
+                        } else if parts.len() == 1 && !parts[0].is_empty() {
+                            // 只有一个参数时，删除匹配的内容
+                            value.replace(&parts[0], "")
                         } else {
                             value
                         }
@@ -739,6 +688,77 @@ impl TemplateEngine {
         }
 
         Ok(value)
+    }
+
+    /// 解析带引号的参数列表（忽略引号内的分隔符）
+    fn parse_quoted_args(&self, s: &str, delimiter: char) -> Vec<String> {
+        let mut parts = Vec::new();
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
+        let mut escaped = false;
+        let mut current = String::new();
+        let mut i = 0usize;
+
+        while i < s.len() {
+            let ch = s[i..].chars().next().unwrap();
+            let ch_len = ch.len_utf8();
+
+            if !escaped {
+                match ch {
+                    '\\' => {
+                        escaped = true;
+                        current.push(ch);
+                        i += ch_len;
+                        continue;
+                    }
+                    '\'' if !in_double_quote => {
+                        in_single_quote = !in_single_quote;
+                        i += ch_len;
+                        continue;
+                    }
+                    '"' if !in_single_quote => {
+                        in_double_quote = !in_double_quote;
+                        i += ch_len;
+                        continue;
+                    }
+                    c if c == delimiter && !in_single_quote && !in_double_quote => {
+                        let part = current.trim().to_string();
+                        // 去除外层引号
+                        parts.push(self.strip_outer_quotes(&part));
+                        current.clear();
+                        i += ch_len;
+                        continue;
+                    }
+                    _ => {
+                        current.push(ch);
+                    }
+                }
+            } else {
+                escaped = false;
+                current.push(ch);
+            }
+            i += ch_len;
+        }
+
+        // 添加最后一个部分
+        if !current.is_empty() || !parts.is_empty() {
+            let part = current.trim().to_string();
+            parts.push(self.strip_outer_quotes(&part));
+        }
+
+        parts
+    }
+
+    /// 去除字符串外层的引号（如果存在）
+    fn strip_outer_quotes(&self, s: &str) -> String {
+        let trimmed = s.trim();
+        if (trimmed.starts_with('"') && trimmed.ends_with('"'))
+            || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+        {
+            trimmed[1..trimmed.len() - 1].to_string()
+        } else {
+            trimmed.to_string()
+        }
     }
 
     /// 查找顶层字符（忽略引号、转义字符和嵌套括号内的字符）
@@ -956,15 +976,19 @@ mod tests {
 
     #[test]
     fn test_filters() {
+        // 测试upper过滤器
         let template = "{name | upper}";
         let context = json!({
             "name": "john doe"
         });
-
         let result = render_template(template, &context).unwrap();
         assert_eq!(result, "JOHN DOE");
 
+        // 测试slice过滤器
         let template = "{name | upper | slice:0,4}";
+        let context = json!({
+            "name": "john doe"
+        });
         let result = render_template(template, &context).unwrap();
         assert_eq!(result, "JOHN");
 
@@ -993,12 +1017,12 @@ mod tests {
         assert_eq!(result, "Hi, World!");
 
         // 测试带有引号的replace过滤器参数
-        let template = "{path | replace:'/api','/v2/api'}";
+        let template = "{greeting | replace:'Hello','Hi'}";
         let context = json!({
-            "path": "/api/users"
+            "greeting": "Hello, World!"
         });
         let result = render_template(template, &context).unwrap();
-        assert_eq!(result, "/v2/api/users");
+        assert_eq!(result, "Hi, World!");
     }
 
     #[test]
