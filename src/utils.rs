@@ -12,14 +12,14 @@ use std::option::Option;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::{env, ptr, slice};
-use windows::core::{Interface, BOOL, GUID, PCWSTR, PWSTR};
+use windows::core::{Interface, BOOL, GUID, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, MAX_PATH};
 use windows::Win32::Storage::FileSystem::{
     GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, VS_FIXEDFILEINFO,
 };
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, IPersistFile,
-    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize,
+    IPersistFile, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
 };
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
@@ -81,11 +81,7 @@ pub fn create_shortcut(
             .map_err(|e| anyhow!("CoCreateInstance(IShellLink) failed: {}", e))?;
 
         // SetPath
-        let wt: Vec<u16> = target
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
+        let wt = HSTRING::from(target);
         shell
             .SetPath(PCWSTR(wt.as_ptr()))
             .map_err(|e| anyhow!("IShellLink::SetPath failed: {}", e))?;
@@ -114,13 +110,9 @@ pub fn create_shortcut(
         if let Some((icon_str, icon_index)) = icon {
             // 解析传入字符串为 PathBuf（不做强制存在性检查）
             let icon_path = Path::new(&icon_str);
-            let wicon: Vec<u16> = icon_path
-                .as_os_str()
-                .encode_wide()
-                .chain(std::iter::once(0))
-                .collect();
+            let icon_wide = HSTRING::from(icon_path);
             shell
-                .SetIconLocation(PCWSTR(wicon.as_ptr()), icon_index)
+                .SetIconLocation(PCWSTR(icon_wide.as_ptr()), icon_index)
                 .map_err(|e| anyhow!("IShellLink::SetIconLocation failed: {}", e))?;
         }
 
@@ -156,11 +148,7 @@ pub fn create_shortcut(
             .map_err(|e| anyhow!("Query IPersistFile failed: {}", e))?;
 
         // 保存到 .lnk（link 路径必须是绝对或可写的）
-        let wlink: Vec<u16> = link
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
+        let wlink = HSTRING::from(link);
         // 第二个参数 bForce? TRUE 表示强制写入
         persist
             .Save(PCWSTR(wlink.as_ptr()), BOOL(1).into())
@@ -192,10 +180,7 @@ pub fn get_shortcut_target(path: &Path) -> Result<PathBuf> {
         unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)? };
 
     // 加载 .lnk 文件
-    let wide_path: Vec<u16> = OsStr::new(path.to_string_lossy().as_ref())
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
+    let wide_path = HSTRING::from(path);
     unsafe {
         shell_link.cast::<IPersistFile>()?.Load(
             PCWSTR(wide_path.as_ptr()),
@@ -660,7 +645,7 @@ fn get_parent_pid(pid: u32) -> windows::core::Result<u32> {
         // 全进程快照
         let h = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?;
         if h.is_invalid() {
-            return Err(windows::core::Error::from_win32());
+            return Err(windows::core::Error::from_thread());
         }
         let mut entry = PROCESSENTRY32W {
             dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
@@ -679,7 +664,7 @@ fn get_parent_pid(pid: u32) -> windows::core::Result<u32> {
             }
         }
         let _ = CloseHandle(h);
-        Err(windows::core::Error::from_win32())
+        Err(windows::core::Error::from_thread())
     }
 }
 
@@ -688,7 +673,7 @@ fn get_process_name(pid: u32) -> windows::core::Result<String> {
     unsafe {
         let h = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?;
         if h.is_invalid() {
-            return Err(windows::core::Error::from_win32());
+            return Err(windows::core::Error::from_thread());
         }
         let mut entry = PROCESSENTRY32W {
             dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
@@ -706,7 +691,7 @@ fn get_process_name(pid: u32) -> windows::core::Result<String> {
                     .unwrap_or(MAX_PATH as usize);
                 let name = OsString::from_wide(&entry.szExeFile[..len])
                     .into_string()
-                    .map_err(|_| windows::core::Error::from_win32())?;
+                    .map_err(|_| windows::core::Error::from_thread())?;
                 let _ = CloseHandle(h);
                 return Ok(name);
             }
@@ -715,7 +700,7 @@ fn get_process_name(pid: u32) -> windows::core::Result<String> {
             }
         }
         let _ = CloseHandle(h);
-        Err(windows::core::Error::from_win32())
+        Err(windows::core::Error::from_thread())
     }
 }
 
@@ -746,10 +731,7 @@ pub fn normalize_app_name(name: &str) -> String {
 /// 读取文件的 version resource 到 Vec<u8>
 fn get_version_info_data(path: &Path) -> Result<Vec<u8>> {
     // Convert file path to wide string (UTF-16) null-terminated
-    let wide_path: Vec<u16> = OsStr::new(path.to_string_lossy().as_ref())
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
+    let wide_path = HSTRING::from(path);
 
     // Get size of version info
     let mut dummy: u32 = 0;
@@ -811,7 +793,7 @@ fn query_string_from_version(data: &[u8], field: &str) -> Result<Option<String>>
         "\\StringFileInfo\\{:04x}{:04x}\\{}",
         lang_id, codepage, field
     );
-    let wide_subblock: Vec<u16> = OsStr::new(&subblock).encode_wide().chain(Some(0)).collect();
+    let wide_subblock = HSTRING::from(subblock);
 
     let mut value_ptr: *mut core::ffi::c_void = std::ptr::null_mut();
     let mut value_len: u32 = 0;
@@ -899,11 +881,7 @@ pub fn get_exe_product_version(path: &Path) -> Result<Option<String>> {
 /// - `Err(error)`: 如果在读取或解析过程中发生错误。
 pub fn get_exe_file_version(path: &Path) -> Result<Option<String>> {
     // 将 Rust Path 转换为 Windows API 所需的宽字符串 (UTF-16)
-    let path_wide: Vec<u16> = path
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
+    let path_wide = HSTRING::from(path);
 
     // 获取版本信息块的大小
     let mut handle = 0u32;
@@ -994,10 +972,12 @@ pub fn get_exe_file_version(path: &Path) -> Result<Option<String>> {
 ///   - `9` (PROCESSOR_ARCHITECTURE_AMD64): x64 (AMD64) 架构。
 ///   - `12` (PROCESSOR_ARCHITECTURE_ARM64): ARM64 架构。
 ///   - 其他值表示其他或未知的架构类型。
-pub unsafe fn get_native_arch() -> u16 {
+pub fn get_native_arch() -> u16 {
     let mut sys_info = SYSTEM_INFO::default();
-    GetNativeSystemInfo(&mut sys_info);
-    sys_info.Anonymous.Anonymous.wProcessorArchitecture.0
+    unsafe {
+        GetNativeSystemInfo(&mut sys_info);
+        sys_info.Anonymous.Anonymous.wProcessorArchitecture.0
+    }
 }
 
 /// 获取程序架构
@@ -1130,14 +1110,10 @@ pub fn exe_has_signature(program: impl AsRef<Path>) -> Result<bool> {
 /// - `bool`: 是否有图标
 pub fn has_icon_in_program(program: &Path) -> bool {
     // 将 Path 转换为 Windows API 所需的宽字符串 (UTF-16)
-    let path_wide: Vec<u16> = program
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
+    let wide_path = HSTRING::from(program);
 
     // 获取文件中包含的图标总数
-    let icon_count = unsafe { ExtractIconExW(PCWSTR(path_wide.as_ptr()), -1, None, None, 0) };
+    let icon_count = unsafe { ExtractIconExW(PCWSTR(wide_path.as_ptr()), -1, None, None, 0) };
 
     // 如果返回的图标数量大于 0，则表示存在图标
     icon_count > 0
@@ -1219,6 +1195,12 @@ pub fn validate_shortcut_name_for_config(name: &str) -> bool {
 /// - 去掉尾部架构词（x86/x64/32位/64位 等）和常见版本 token（v1.2.3、1.2.3.4）/日期样式
 /// - 替换文件名不允许的字符（<>:"/\\|?* 等 -> '-'），把 & 替为空格
 /// - 合并多空格并 Trim
+///
+/// # 参数
+/// - `raw`: 原始描述
+///
+/// # 返回值
+/// - `Option<String>`: 清洗后的描述或 `None`（表示不可用或空）
 pub fn sanitize_description(raw: &str) -> Option<String> {
     if raw.trim().is_empty() {
         return None;

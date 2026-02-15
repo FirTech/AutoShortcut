@@ -9,6 +9,9 @@ mod console;
 mod template;
 mod utils;
 
+#[cfg(test)]
+mod test;
+
 use crate::config::{ConfigInfo, Lnk, Template, DEFAULT_NAME_TEMPLATE};
 use crate::console::{write_console, ConsoleType};
 use crate::template::process_template;
@@ -22,7 +25,6 @@ use anyhow::{anyhow, Result};
 use clap::Parser;
 use rust_i18n::{set_locale, t};
 use std::collections::HashSet;
-use std::fs;
 use std::fs::create_dir_all;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -31,6 +33,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
+use std::{env, fs};
 use sys_locale::get_locale;
 use walkdir::WalkDir;
 use windows::Win32::System::SystemInformation::{
@@ -53,7 +56,7 @@ fn main() -> Result<()> {
     }
 
     // 判断是否从资源管理器启动
-    if launched_from_explorer() {
+    if launched_from_explorer() && env::args().len() == 1 {
         println!("{}", t!("cmdline_tool_tips"));
         sleep(Duration::from_secs(5));
         return Ok(());
@@ -135,55 +138,61 @@ pub fn auto_shortcut(
     let mut install_parallel = install_parallel;
 
     if let Some(config) = config_path {
-        if let Ok(mut config) = ConfigInfo::parse_config_file(config) {
-            if config.only_match {
-                only_match = true;
-            }
-
-            if config.use_filename {
-                use_filename = true;
-            }
-
-            if config.install {
-                install_script = true;
-            }
-
-            if config.install_parallel {
-                install_parallel = true;
-            }
-
-            // 判断评分阈值是否合法
-            if let Some(ratio) = config.score_ratio {
-                if ratio > 1.0 {
-                    write_console(
-                        ConsoleType::Warning,
-                        &t!("config.invalid_ratio", ratio = ratio),
-                    );
-                    config.score_ratio = None;
+        match ConfigInfo::parse_config_file(config) {
+            Ok(mut config) => {
+                if config.only_match {
+                    only_match = true;
                 }
-            }
 
-            // 指定评分阈值百分比
-            if let Some(ratio) = config.score_ratio {
-                score_ratio = ratio;
-            }
+                if config.use_filename {
+                    use_filename = true;
+                }
 
-            // 验证配置文件中快捷方式名称是否合法
-            for ln in &config.shortcut {
-                if let Some(ref provided_name) = ln.name {
-                    if !validate_shortcut_name_for_config(provided_name) {
+                if config.install {
+                    install_script = true;
+                }
+
+                if config.install_parallel {
+                    install_parallel = true;
+                }
+
+                // 判断评分阈值是否合法
+                if let Some(ratio) = config.score_ratio {
+                    if ratio > 1.0 {
                         write_console(
                             ConsoleType::Warning,
-                            &t!("config.invalid_name", name = provided_name),
+                            &t!("config.invalid_ratio", ratio = ratio),
                         );
+                        config.score_ratio = None;
                     }
                 }
-            }
 
-            config_info = Some(config.clone());
-        } else {
-            write_console(ConsoleType::Error, &t!("config.parse_failed"));
-            return Err(anyhow!("Configuration file parsing failed"));
+                // 指定评分阈值百分比
+                if let Some(ratio) = config.score_ratio {
+                    score_ratio = ratio;
+                }
+
+                // 验证配置文件中快捷方式名称是否合法
+                for ln in &config.shortcut {
+                    if let Some(ref provided_name) = ln.name {
+                        if !validate_shortcut_name_for_config(provided_name) {
+                            write_console(
+                                ConsoleType::Warning,
+                                &t!("config.invalid_name", name = provided_name),
+                            );
+                        }
+                    }
+                }
+
+                config_info = Some(config.clone());
+            }
+            Err(e) => {
+                write_console(
+                    ConsoleType::Error,
+                    &format!("{}: {}", &t!("config.parse_failed"), e),
+                );
+                return Err(anyhow!("Configuration file parsing failed"));
+            }
         }
     }
 
@@ -655,8 +664,11 @@ fn config_shortcut(
     // 读取配置文件信息
     let config_info = match ConfigInfo::parse_config_file(&config_path) {
         Ok(config) => config,
-        Err(_e) => {
-            write_console(ConsoleType::Error, &t!("config.parse_failed"));
+        Err(e) => {
+            write_console(
+                ConsoleType::Error,
+                &format!("{}: {}", &t!("config.parse_failed"), e),
+            );
             return Err(anyhow!("Configuration file parsing failed"));
         }
     };
@@ -986,7 +998,7 @@ fn find_software_best_exe(
 
             // 判断程序位数是否与系统相匹配
             if let Ok(program_arch_code) = get_program_arch(file_path) {
-                let system_arch_code = unsafe { get_native_arch() };
+                let system_arch_code = get_native_arch();
                 if match program_arch_code {
                     0x014c => {
                         // IMAGE_FILE_MACHINE_I386 (x86 程序)

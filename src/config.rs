@@ -9,7 +9,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-use toml::{Table, Value};
+use toml::Table;
 
 /// 默认名称模板
 pub const DEFAULT_NAME_TEMPLATE: &str =
@@ -131,7 +131,7 @@ impl Template {
 }
 
 /// 程序信息列表
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct Lnk {
     /// 程序名
     pub exec: String,
@@ -302,30 +302,75 @@ impl ConfigInfo {
             config.shortcut = map.into_values().collect();
         }
 
-        // 处理内置变量
-        let mut doc: Value = config_content.parse()?;
-        fn replace_in_value(val: &mut Value, config_path: &Path) {
-            match val {
-                Value::String(s) => {
-                    *s = process_env(s.to_string(), Some(config_path));
-                }
-                Value::Table(table) => {
-                    for (_key, v) in table.iter_mut() {
-                        replace_in_value(v, config_path);
-                    }
-                }
-                Value::Array(arr) => {
-                    for v in arr.iter_mut() {
-                        replace_in_value(v, config_path);
-                    }
-                }
-                _ => {}
-            }
-        }
-        replace_in_value(&mut doc, path);
+        // 处理内置变量：遍历 ConfigInfo 结构
+        process_env_in_config(&mut config, path);
 
-        let config: ConfigInfo = doc.try_into()?;
         Ok(config)
+    }
+}
+
+/// 处理 ConfigInfo 中的环境变量
+///
+/// # 参数
+/// - `config`: 要处理的 ConfigInfo 结构体引用
+/// - `config_path`: 配置文件路径，用于处理环境变量中的相对路径
+fn process_env_in_config(config: &mut ConfigInfo, config_path: &Path) {
+    // 处理 template
+    if let Some(ref mut template) = config.template {
+        if let Some(ref mut name) = template.name {
+            *name = process_env(name.clone(), Some(config_path));
+        }
+        if let Some(ref mut dest) = template.dest {
+            *dest = process_env(dest.clone(), Some(config_path));
+        }
+        if let Some(ref mut icon) = template.icon {
+            *icon = process_env(icon.clone(), Some(config_path));
+        }
+        if let Some(ref mut work_dir) = template.work_dir {
+            *work_dir = process_env(work_dir.clone(), Some(config_path));
+        }
+        if let Some(ref mut comment) = template.comment {
+            *comment = process_env(comment.clone(), Some(config_path));
+        }
+    }
+
+    // 处理 ignore 列表
+    for s in &mut config.ignore {
+        *s = process_env(s.clone(), Some(config_path));
+    }
+
+    // 处理 scripts 列表
+    for s in &mut config.scripts {
+        *s = process_env(s.clone(), Some(config_path));
+    }
+
+    // 处理 shortcut 列表
+    for lnk in &mut config.shortcut {
+        lnk.exec = process_env(lnk.exec.clone(), Some(config_path));
+        if let Some(ref mut name) = lnk.name {
+            *name = process_env(name.clone(), Some(config_path));
+        }
+        if let Some(ref mut icon) = lnk.icon {
+            *icon = process_env(icon.clone(), Some(config_path));
+        }
+        if let Some(ref mut args) = lnk.args {
+            *args = process_env(args.clone(), Some(config_path));
+        }
+        if let Some(ref mut dest) = lnk.dest {
+            *dest = process_env(dest.clone(), Some(config_path));
+        }
+        if let Some(ref mut work_dir) = lnk.work_dir {
+            *work_dir = process_env(work_dir.clone(), Some(config_path));
+        }
+        if let Some(ref mut window_state) = lnk.window_state {
+            *window_state = process_env(window_state.clone(), Some(config_path));
+        }
+        if let Some(ref mut comment) = lnk.comment {
+            *comment = process_env(comment.clone(), Some(config_path));
+        }
+        if let Some(ref mut hotkey) = lnk.hotkey {
+            *hotkey = process_env(hotkey.clone(), Some(config_path));
+        }
     }
 }
 
@@ -349,5 +394,30 @@ impl Lnk {
             return Some(kw.clone());
         }
         None
+    }
+}
+
+impl Default for ConfigInfo {
+    fn default() -> Self {
+        ConfigInfo {
+            template: None,
+            enable_escape: false,
+            use_filename: false,
+            only_match: false,
+            score_ratio: None,
+            ignore: Vec::new(),
+            install: false,
+            install_parallel: false,
+            scripts: Vec::new(),
+            shortcut: Vec::new(),
+            name: Table::new(),
+            work_dir: Table::new(),
+            args: Table::new(),
+            icon: Table::new(),
+            dest: Table::new(),
+            window_state: Table::new(),
+            comment: Table::new(),
+            hotkey: Table::new(),
+        }
     }
 }
