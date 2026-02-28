@@ -1223,6 +1223,7 @@ pub fn sanitize_description(raw: &str) -> Option<String> {
         || low.contains("7z setup sfx")
         || low.contains("7-zip sfx")
         || low.contains("7zS.sfx")
+        || low.contains("microsoft® windows® operating system")
         || low.starts_with("http://")
         || low.starts_with("https://")
         || low.starts_with("www.")
@@ -1272,6 +1273,43 @@ pub fn sanitize_description(raw: &str) -> Option<String> {
     } else {
         Some(final_s)
     }
+}
+
+/// 清洗原始文件名
+///
+/// # 参数
+/// - `raw`: 原始文件名
+///
+/// # 返回值
+/// - `Some<String>`: 清洗后的文件名
+/// - `None`: 表示不可用或空
+pub fn sanitize_orig_filename(raw: &str) -> Option<String> {
+    let s = raw.trim().to_string();
+    if s.is_empty() {
+        return None;
+    }
+
+    // 小写用于若干快速检测
+    let low = s.to_ascii_lowercase();
+
+    // 明确判定为不可用的几类
+    if low.trim_matches('_').is_empty()
+        || low.contains("todo:")
+        || low.contains("7z setup sfx")
+        || low.contains("7-zip sfx")
+        || low.contains("7zS.sfx")
+        || low.contains("7zsfxmod")
+        || low.starts_with("http://")
+        || low.starts_with("https://")
+        || low.starts_with("www.")
+        || low.starts_with("易语言程序")
+        || low.starts_with('@')
+        || low.starts_with("QQ：")
+    {
+        return None;
+    }
+
+    Some(s)
 }
 
 /// 删除字符串中的 URL（简单策略：定位常见前缀并删除到下一个空白或结尾）

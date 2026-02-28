@@ -198,25 +198,26 @@ pub fn auto_shortcut(
 
     let identified_app_roots: Arc<Mutex<HashSet<PathBuf>>> = Arc::new(Mutex::new(HashSet::new()));
 
-    // 内置排除目录
-    let EXCLUDED_DIRS: &[&str] = &[
-        // 系统目录
+    // 排除系统目录
+    const SYSTEM_EXCLUDED_DIRS: &[&str] = &[
         "$RECYCLE.BIN",
         "System Volume Information",
         "Recovery",
         "Config.Msi",
         "MSOCache",
-        // 配置文件路径
-        if let Some(config) = config_path {
-            &*config.to_string_lossy().to_string()
-        } else {
-            ""
-        },
     ];
 
-    let mut all_excluded = EXCLUDED_DIRS.to_vec();
+    let mut all_excluded = Vec::new();
+    all_excluded.extend(SYSTEM_EXCLUDED_DIRS.iter().map(|s| s.to_string()));
+
+    // 配置文件自身路径
+    if let Some(config) = config_path {
+        all_excluded.push(config.to_string_lossy().to_string());
+    }
+
+    // 配置文件中的排除路径
     if let Some(config) = &config_info {
-        all_excluded.extend(config.ignore.iter().map(|s| s.as_str()));
+        all_excluded.extend(config.ignore.clone());
     }
 
     // 主循环: 遍历所有文件（包括子目录）
@@ -230,7 +231,7 @@ pub fn auto_shortcut(
             // 排除：特殊目录
             if entry.file_type().is_dir() {
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if EXCLUDED_DIRS
+                    if SYSTEM_EXCLUDED_DIRS
                         .iter()
                         .any(|&ex| ex.eq_ignore_ascii_case(name))
                     {
@@ -318,8 +319,8 @@ pub fn auto_shortcut(
                 continue;
             }
 
-            //判断是否为单文件目录
-            if is_single_file_dir(file_path) {
+            // 判断是否为单文件目录
+            if is_single_file_dir(file_path, Some(&all_excluded)) {
                 // 单文件程序目录
                 if !list_mode {
                     write_console(
@@ -1157,14 +1158,19 @@ fn find_software_best_exe(
 
 /// 判断程序目录是否为单文件程序目录
 ///
+/// 条件：
+///  1. 根目录下至少有一个 exe，且除了 exe 之外没有其它文件
+///  2. 根目录没有子目录
+///
 /// # 参数
 ///
 /// - `app_root` - 要检查的程序目录路径
+/// - `exclude_keyword` - 排除的关键词列表，用于过滤文件
 ///
 /// # 返回值
 ///
 /// 如果目录符合单文件程序目录条件，返回 `true`；否则返回 `false`。
-fn is_single_file_dir(app_root: &Path) -> bool {
+fn is_single_file_dir(app_root: &Path, exclude_keyword: Option<&[String]>) -> bool {
     if let Ok(entries) = fs::read_dir(app_root) {
         let mut exe_count = 0;
         let mut other_file_count = 0;
@@ -1172,6 +1178,31 @@ fn is_single_file_dir(app_root: &Path) -> bool {
 
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
+            // 检查文件名是否包含排除关键词
+            if let Some(exclude_keyword) = exclude_keyword {
+                if exclude_keyword.iter().any(|k| {
+                    if let Ok(keyword_path) = PathBuf::from(k).canonicalize() {
+                        // 判断绝对路径是否匹配
+                        if let Ok(current_path) = path.canonicalize() {
+                            current_path == keyword_path
+                        } else {
+                            path.display().to_string().to_lowercase().contains(k)
+                        }
+                    } else {
+                        // 不是绝对路径，使用现有的包含匹配逻辑
+                        path.display().to_string().to_lowercase().contains(k)
+                    }
+                }) {
+                    if DEBUG.load(Ordering::Relaxed) {
+                        write_console(
+                            ConsoleType::Debug,
+                            &t!("scan.ignore", path = path.display()),
+                        );
+                    }
+                    continue;
+                }
+            }
+
             if path.is_file() {
                 if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                     let lower_ext = ext.to_ascii_lowercase();
@@ -1195,6 +1226,7 @@ fn is_single_file_dir(app_root: &Path) -> bool {
 }
 
 /// 判断目录是否为单文件程序、绿色软件的混合目录
+///
 /// 条件：
 ///  1. 根目录下至少有一个 exe，且除了 exe 之外没有其它文件（视情况也可允许 .ico/.ini/.xml）
 ///  2. 根目录的子目录是单文件目录或绿色软件目录
@@ -1207,7 +1239,7 @@ fn is_single_file_dir(app_root: &Path) -> bool {
 /// # 返回值
 ///
 /// 如果目录符合混合目录条件，返回 `true`；否则返回 `false`。
-fn is_hybrid_software_dir(dir: &Path, exclude_keyword: &[&str]) -> bool {
+fn is_hybrid_software_dir(dir: &Path, exclude_keyword: &[String]) -> bool {
     /// 是否把某些文件扩展名视为“允许的辅助文件”，不会导致拒绝混合目录判定
     const ALLOWED_ROOT_FILE_EXT: &[&str] = &["ico"];
 
@@ -1279,7 +1311,7 @@ fn is_hybrid_software_dir(dir: &Path, exclude_keyword: &[&str]) -> bool {
     let mut app_subdirs = 0usize;
     for sd in &subdirs {
         // 对每个子目录使用已有的轻量检测函数（它们本身要足够稳健）
-        if contains_app_structure_lightweight(sd) || is_single_file_dir(sd) {
+        if contains_app_structure_lightweight(sd) || is_single_file_dir(sd, Some(exclude_keyword)) {
             app_subdirs += 1;
         }
     }
@@ -1359,7 +1391,7 @@ fn is_category_dir(dir: &Path) -> bool {
     // 子目录中，至少有一个是真正的“应用子包”（单文件 或 绿色软件）
     let mut has_app_subdir = false;
     for sd in &sub_dirs {
-        if is_single_file_dir(sd) || contains_app_structure_lightweight(sd) {
+        if is_single_file_dir(sd, None) || contains_app_structure_lightweight(sd) {
             has_app_subdir = true;
             break;
         } else {

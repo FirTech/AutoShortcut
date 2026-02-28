@@ -1,6 +1,7 @@
 use crate::utils::{
     get_exe_company_name, get_exe_copyright, get_exe_description, get_exe_file_version,
     get_exe_original_filename, get_exe_product_name, get_program_arch, sanitize_description,
+    sanitize_orig_filename,
 };
 use chrono::{DateTime, Local, NaiveDateTime};
 use serde::Serialize;
@@ -83,7 +84,7 @@ fn render_var(path: &Path) -> HashMap<String, String> {
     };
     vars.insert(
         "desc".into(),
-        sanitize_description(&desc_raw).unwrap_or("".to_string()),
+        sanitize_description(&desc_raw).unwrap_or_default(),
     );
     vars.insert("desc_raw".into(), desc_raw);
 
@@ -94,7 +95,7 @@ fn render_var(path: &Path) -> HashMap<String, String> {
     };
     vars.insert(
         "product".into(),
-        sanitize_description(&product_raw).unwrap_or("".to_string()),
+        sanitize_description(&product_raw).unwrap_or_default(),
     );
     vars.insert("product_raw".into(), product_raw.clone());
 
@@ -108,13 +109,15 @@ fn render_var(path: &Path) -> HashMap<String, String> {
     );
 
     // 原始文件名
+    let orig_filename_raw = match get_exe_original_filename(path) {
+        Ok(Some(v)) => v,
+        _ => String::new(),
+    };
     vars.insert(
         "orig_filename".into(),
-        match get_exe_original_filename(path) {
-            Ok(Some(v)) => v,
-            _ => String::new(),
-        },
+        sanitize_orig_filename(&orig_filename_raw).unwrap_or_default(),
     );
+    vars.insert("orig_filename_raw".into(), orig_filename_raw.clone());
 
     // 版权信息
     vars.insert(
@@ -247,7 +250,7 @@ fn render_var(path: &Path) -> HashMap<String, String> {
 
 /// 模板引擎结构体
 pub struct TemplateEngine {
-    // 可选：缓存已解析的模板以提高性能
+    // 缓存已解析的模板以提高性能
     cache: HashMap<String, String>,
 }
 

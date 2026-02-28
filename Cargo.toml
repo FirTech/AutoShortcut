@@ -1,6 +1,6 @@
 [package]
 name = "AutoShortcut"
-version = "2.2.0"
+version = "2.2.1"
 edition = "2024"
 
 [build-dependencies]
@@ -15,7 +15,7 @@ codegen-units = 1
 panic = 'abort'
 
 [dev-dependencies]
-tempfile = "3.25.0"
+tempfile = "3.26.0"
 
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
@@ -27,9 +27,9 @@ walkdir = "2.5.0"
 aho-corasick = "1.1.4"
 glob = "0.3.3"
 goblin = "0.10.4"
-memmap2 = "0.9.9"
+memmap2 = "0.9.10"
 rust-i18n = "3.1.5"
 sys-locale = "0.3.2"
-chrono = "0.4.43"
-anyhow = "1.0.101"
+chrono = "0.4.44"
+anyhow = "1.0.102"
 windows = { version = "0.62.2", features = ["Win32_Storage_FileSystem", "Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_System_SystemInformation", "Win32_System_Diagnostics", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading", "Win32_System_Com"] }
