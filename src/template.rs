@@ -8,6 +8,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 
 /// 渲染模板
 ///
@@ -20,8 +21,16 @@ use std::path::Path;
 ///
 /// 渲染后的字符串
 pub fn process_template(path: &Path, template: &str) -> String {
-    let mut engine = TemplateEngine::new();
-    engine.render(template, &render_var(path)).unwrap()
+    shared_template_engine()
+        .lock()
+        .unwrap()
+        .render(template, &render_var(path))
+        .unwrap()
+}
+
+fn shared_template_engine() -> &'static Mutex<TemplateEngine> {
+    static ENGINE: OnceLock<Mutex<TemplateEngine>> = OnceLock::new();
+    ENGINE.get_or_init(|| Mutex::new(TemplateEngine::new()))
 }
 
 /// 渲染变量
@@ -249,9 +258,15 @@ fn render_var(path: &Path) -> HashMap<String, String> {
 }
 
 /// 模板引擎结构体
+#[derive(Clone, Debug)]
+enum TemplatePart {
+    Literal(String),
+    Expression(String),
+}
+
 pub struct TemplateEngine {
     // 缓存已解析的模板以提高性能
-    cache: HashMap<String, String>,
+    cache: HashMap<String, Vec<TemplatePart>>,
 }
 
 /// 模板引擎实现
@@ -268,19 +283,38 @@ impl TemplateEngine {
     where
         C: Serialize,
     {
-        // 如果缓存中存在已解析的模板，则直接使用
-        if let Some(result) = self.cache.get(template) {
-            return Ok(result.clone());
-        }
-
-        // 将传入的context转换为serde_json::Value
         let value_context = match serde_json::to_value(context) {
             Ok(value) => value,
             Err(_) => return Err("Unable to convert context to JSON value".to_string()),
         };
 
-        // 手动扫描模板字符串，识别表达式
+        if !self.cache.contains_key(template) {
+            let parts = self.parse_template(template);
+            self.cache.insert(template.to_string(), parts);
+        }
+
+        let parts = self
+            .cache
+            .get(template)
+            .ok_or_else(|| "Template cache lookup failed".to_string())?;
+
         let mut result = String::new();
+        for part in parts {
+            match part {
+                TemplatePart::Literal(text) => result.push_str(text),
+                TemplatePart::Expression(expr) => {
+                    let value = self.evaluate_expression(expr, &value_context)?;
+                    result.push_str(&value);
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn parse_template(&self, template: &str) -> Vec<TemplatePart> {
+        let mut parts = Vec::new();
+        let mut literal = String::new();
         let mut i = 0;
         let chars: Vec<char> = template.chars().collect();
 
@@ -301,24 +335,25 @@ impl TemplateEngine {
                 }
 
                 if depth == 0 {
-                    // 提取表达式内容并计算值 - 使用字符索引而不是字节索引
+                    if !literal.is_empty() {
+                        parts.push(TemplatePart::Literal(std::mem::take(&mut literal)));
+                    }
                     let expr_content: String = chars[start..end - 1].iter().collect();
-                    let value = self.evaluate_expression(&expr_content, &value_context)?;
-                    result.push_str(&value);
+                    parts.push(TemplatePart::Expression(expr_content));
                     i = end;
                     continue;
                 }
             }
 
-            // 添加非表达式字符
-            result.push(chars[i]);
+            literal.push(chars[i]);
             i += 1;
         }
 
-        // 缓存结果
-        self.cache.insert(template.to_string(), result.clone());
+        if !literal.is_empty() {
+            parts.push(TemplatePart::Literal(literal));
+        }
 
-        Ok(result)
+        parts
     }
 
     /// 计算表达式
@@ -923,8 +958,7 @@ pub fn render_template<C>(template: &str, context: &C) -> Result<String, String>
 where
     C: Serialize,
 {
-    let mut engine = TemplateEngine::new();
-    engine.render(template, context)
+    shared_template_engine().lock().unwrap().render(template, context)
 }
 
 #[cfg(test)]
@@ -1060,4 +1094,24 @@ mod tests {
         let result = render_template(template, &context).unwrap();
         assert_eq!(result, "基础内容");
     }
+    #[test]
+    fn test_cache_reuses_parsed_template_without_reusing_old_rendered_value() {
+        let mut engine = TemplateEngine::new();
+        let template = "Hello, {name}!";
+
+        let context = json!({
+            "name": "Alice"
+        });
+        let result = engine.render(template, &context).unwrap();
+        assert_eq!(result, "Hello, Alice!");
+        assert_eq!(engine.cache.len(), 1);
+
+        let context = json!({
+            "name": "Bob"
+        });
+        let result = engine.render(template, &context).unwrap();
+        assert_eq!(result, "Hello, Bob!");
+        assert_eq!(engine.cache.len(), 1);
+    }
+
 }
