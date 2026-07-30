@@ -18,8 +18,8 @@ use windows::Win32::Storage::FileSystem::{
     GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, VS_FIXEDFILEINFO,
 };
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize,
-    IPersistFile, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, IPersistFile,
+    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
 };
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
@@ -726,6 +726,46 @@ pub fn normalize_app_name(name: &str) -> String {
         .replace("-", "")
         .replace("_", "")
         .replace(".exe", "") // 移除扩展名
+}
+
+/// 计算应用程序名称的相似度，范围 [0.0, 1.0]
+///
+/// # 参数
+/// - `left` - 第一个应用程序名称
+/// - `right` - 第二个应用程序名称
+///
+/// # 返回值
+/// - `f32` - 应用程序名称的相似度，范围 [0.0, 1.0]
+pub fn name_similarity(left: &str, right: &str) -> f32 {
+    let left = normalize_app_name(left);
+    let right = normalize_app_name(right);
+    if left.is_empty() || right.is_empty() {
+        return 0.0;
+    }
+    if left == right {
+        return 1.0;
+    }
+    if left.contains(&right) || right.contains(&left) {
+        return 0.8;
+    }
+
+    let left_chars: Vec<char> = left.chars().collect();
+    let right_chars: Vec<char> = right.chars().collect();
+    let mut previous: Vec<usize> = (0..=right_chars.len()).collect();
+    for (left_index, left_char) in left_chars.iter().enumerate() {
+        let mut current = vec![left_index + 1];
+        for (right_index, right_char) in right_chars.iter().enumerate() {
+            let replace_cost = usize::from(left_char != right_char);
+            current.push(
+                (previous[right_index + 1] + 1)
+                    .min(current[right_index] + 1)
+                    .min(previous[right_index] + replace_cost),
+            );
+        }
+        previous = current;
+    }
+    let distance = previous[right_chars.len()] as f32;
+    1.0 - distance / left_chars.len().max(right_chars.len()) as f32
 }
 
 /// 读取文件的 version resource 到 Vec<u8>

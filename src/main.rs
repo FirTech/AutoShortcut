@@ -18,7 +18,7 @@ use crate::template::process_template;
 use crate::utils::{
     create_shortcut, exe_has_signature, get_exe_description, get_native_arch, get_program_arch,
     get_shortcut_target, has_icon_in_program, is_gui_program, is_running_under_wow64,
-    launched_from_explorer, matches_glob, normalize_app_name, parse_hotkey, parse_icon_spec,
+    launched_from_explorer, matches_glob, name_similarity, parse_hotkey, parse_icon_spec,
     replace_ignore_case, resolve_relative_path, validate_shortcut_name_for_config,
 };
 use anyhow::{anyhow, Result};
@@ -125,13 +125,11 @@ pub fn auto_shortcut(
     start: bool,
     list_mode: bool,
     use_filename: bool,
-    score_ratio: Option<f32>,
+    score_ratio: f32,
 ) -> Result<()> {
-    // 评分阈值百分比
-    let mut score_ratio = score_ratio.unwrap_or(0.3);
-
     // 读取配置文件信息
     let mut config_info = None;
+    let mut score_ratio = score_ratio;
     let mut only_match = only_match;
     let mut use_filename = use_filename;
     let mut install_script = install_script;
@@ -867,8 +865,30 @@ fn find_software_best_exe(
     score_ratio: f32,
     list_mode: bool,
 ) -> Option<(PathBuf, PathBuf)> {
+    const CONFIG_MATCH_SCORE: i32 = 100;
+    const NAME_PARENT_MAX_SCORE: i32 = 40;
+    const GUI_SCORE: i32 = 50;
+    const ICON_SCORE: i32 = 40;
+    const DESCRIPTION_SCORE: i32 = 30;
+    const NATIVE_ARCH_SCORE: i32 = 45;
+    const X86_COMPATIBLE_ARCH_SCORE: i32 = 35;
+    const SIGNATURE_SCORE: i32 = 60;
+    const MAX_SIZE_SCORE: i32 = 30;
+    const MIN_NAME_SIMILARITY: f32 = 0.70;
+
+    // The config bonus expresses an explicit user preference, not evidence that an EXE is a
+    // runnable main program. It must not make the automatic-recognition threshold harder to meet.
+    const MAX_HEURISTIC_SCORE: i32 = NAME_PARENT_MAX_SCORE
+        + GUI_SCORE
+        + ICON_SCORE
+        + DESCRIPTION_SCORE
+        + NATIVE_ARCH_SCORE
+        + SIGNATURE_SCORE
+        + MAX_SIZE_SCORE;
+
     let mut best_candidate: Option<(PathBuf, PathBuf)> = None;
     let mut best_score = 0;
+    let system_arch_code = get_native_arch();
 
     // 局部扫描：扫描当前目录及子目录（最大两层）
     for entry_result in WalkDir::new(app_root_path).max_depth(2).into_iter() {
@@ -890,16 +910,6 @@ fn find_software_best_exe(
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
         {
-            /// 最高分
-            const MAX_SCORE: i32 = 100  // 配置匹配
-                + 40   //文件名与父目录名匹配
-                + 50   // GUI
-                + 40   // 图标
-                + 30   // 描述
-                + 45   // 架构
-                + 60   // 数字签名
-                + 30; // 文件体积分
-
             // 当前分数
             let mut score = 0;
             // 分数明细记录 (metric_name, delta)
@@ -950,8 +960,8 @@ fn find_software_best_exe(
                     };
                     full_path == file_path
                 }) {
-                    score += 100;
-                    breakdown.push(("config_match", 100));
+                    score += CONFIG_MATCH_SCORE;
+                    breakdown.push(("config_match", CONFIG_MATCH_SCORE));
                 }
             }
 
@@ -962,14 +972,11 @@ fn find_software_best_exe(
                 .and_then(|n| n.to_str())
             {
                 if let Some(file_stem) = file_path.file_stem().and_then(|s| s.to_str()) {
-                    let normalized_file_stem = normalize_app_name(file_stem);
-                    let normalized_parent_name = normalize_app_name(parent_dir_name);
-                    if !normalized_parent_name.is_empty()
-                        && (normalized_file_stem.contains(&normalized_parent_name)
-                            || normalized_parent_name.contains(&normalized_file_stem))
-                    {
-                        score += 40;
-                        breakdown.push(("name_parent_match", 40));
+                    let similarity = name_similarity(file_stem, parent_dir_name);
+                    if similarity >= MIN_NAME_SIMILARITY {
+                        let name_score = (similarity * NAME_PARENT_MAX_SCORE as f32).round() as i32;
+                        score += name_score;
+                        breakdown.push(("name_parent_match", name_score));
                     }
                 }
             }
@@ -977,8 +984,8 @@ fn find_software_best_exe(
             // 判断是否为界面程序
             if let Ok(is_gui) = is_gui_program(file_path) {
                 if is_gui {
-                    score += 50;
-                    breakdown.push(("gui", 50));
+                    score += GUI_SCORE;
+                    breakdown.push(("gui", GUI_SCORE));
                 } else {
                     score -= 30;
                     breakdown.push(("gui_penalty", -30));
@@ -987,43 +994,39 @@ fn find_software_best_exe(
 
             // 判断是否有图标
             if has_icon_in_program(file_path) {
-                score += 40;
-                breakdown.push(("icon", 40));
+                score += ICON_SCORE;
+                breakdown.push(("icon", ICON_SCORE));
             }
 
             // 判断是否有程序描述信息
             if let Ok(Some(_description)) = get_exe_description(file_path) {
-                score += 30;
-                breakdown.push(("description", 30));
+                score += DESCRIPTION_SCORE;
+                breakdown.push(("description", DESCRIPTION_SCORE));
             }
 
             // 判断程序位数是否与系统相匹配
             if let Ok(program_arch_code) = get_program_arch(file_path) {
-                let system_arch_code = get_native_arch();
-                if match program_arch_code {
-                    0x014c => {
-                        // IMAGE_FILE_MACHINE_I386 (x86 程序)
-                        system_arch_code == PROCESSOR_ARCHITECTURE_INTEL.0 // 匹配 x86 系统
+                let arch_score = match (program_arch_code, system_arch_code) {
+                    // Native programs are preferred when otherwise comparable.
+                    (0x014c, arch) if arch == PROCESSOR_ARCHITECTURE_INTEL.0 => NATIVE_ARCH_SCORE,
+                    (0x8664, arch) if arch == PROCESSOR_ARCHITECTURE_AMD64.0 => NATIVE_ARCH_SCORE,
+                    (0xAA64, arch) if arch == PROCESSOR_ARCHITECTURE_ARM64.0 => NATIVE_ARCH_SCORE,
+                    // WoW64 allows x86 Windows programs to run on x64 Windows.
+                    (0x014c, arch) if arch == PROCESSOR_ARCHITECTURE_AMD64.0 => {
+                        X86_COMPATIBLE_ARCH_SCORE
                     }
-                    0x8664 => {
-                        // IMAGE_FILE_MACHINE_AMD64 (x64 程序)
-                        system_arch_code == PROCESSOR_ARCHITECTURE_AMD64.0 // 匹配 x64 系统
-                    }
-                    0xAA64 => {
-                        // IMAGE_FILE_MACHINE_ARM64 (ARM64 程序)
-                        system_arch_code == PROCESSOR_ARCHITECTURE_ARM64.0 // 匹配 ARM64 系统
-                    }
-                    _ => false, // 遇到未知或不常见的程序架构，默认不匹配
-                } {
-                    score += 45;
-                    breakdown.push(("arch", 45));
+                    _ => 0,
+                };
+                if arch_score > 0 {
+                    score += arch_score;
+                    breakdown.push(("arch", arch_score));
                 }
             }
 
             // 判断是否有数字签名
             if exe_has_signature(file_path).unwrap_or(false) {
-                score += 60;
-                breakdown.push(("signature", 60));
+                score += SIGNATURE_SCORE;
+                breakdown.push(("signature", SIGNATURE_SCORE));
             }
 
             // 获取程序大小
@@ -1034,7 +1037,7 @@ fn find_software_best_exe(
                 // 只对大于等于 1MB 的文件进行评分
                 if file_size_mb >= 1 {
                     // 每 MB 增加 1 分，并四舍五入、并设置最高分上限，防止分数过高
-                    let size_score = (file_size_mb as i32).min(30);
+                    let size_score = (file_size_mb as i32).min(MAX_SIZE_SCORE);
                     score += size_score;
                     if size_score != 0 {
                         breakdown.push(("size", size_score));
@@ -1069,7 +1072,7 @@ fn find_software_best_exe(
             }
 
             // 只有得分超过阈值才继续
-            if score <= (MAX_SCORE as f32 * score_ratio).round() as i32 {
+            if score <= (MAX_HEURISTIC_SCORE as f32 * score_ratio).round() as i32 {
                 // println!("[局部扫描][非主程序] {} 得分过低 ({})，跳过", file_path.display(), score);
                 continue;
             }

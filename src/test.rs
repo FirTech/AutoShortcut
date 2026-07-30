@@ -267,7 +267,7 @@ fn test_scoring_config_match() {
         &test_dir,
         Some(&config_info),
         temp_dir.path(),
-        0.0, // score_ratio 为 0 表示不过滤任何得分
+        0.3, // 配置匹配不应抬高自动识别阈值
         true,
     );
 

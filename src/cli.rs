@@ -26,7 +26,12 @@ pub struct Cli {
     pub config: Option<PathBuf>,
 
     /// 匹配配置文件中的信息创建快捷方式
-    #[arg(short = 'm', long, requires = "config", help = "Create shortcuts to match profiles")]
+    #[arg(
+        short = 'm',
+        long,
+        requires = "config",
+        help = "Create shortcuts to match profiles"
+    )]
     pub only_match: bool,
 
     /// 是否建立目录
@@ -50,12 +55,21 @@ pub struct Cli {
     pub list: bool,
 
     /// 使用原始文件名做快捷方式名称
-    #[clap(short = 'f', long = "use-filename", help = "Use original file name for shortcut")]
+    #[clap(
+        short = 'f',
+        long = "use-filename",
+        help = "Use original file name for shortcut"
+    )]
     pub use_filename: bool,
 
     /// 评分阈值
-    #[arg(short = 'r', long, help = "Ratio (0.0~1.0) of max possible score to use as threshold")]
-    pub score_ratio: Option<f32>,
+    #[arg(
+        short = 'r',
+        long,
+        default_value = "0.3",
+        help = "Ratio (0.0~1.0) of max possible score to use as threshold"
+    )]
+    pub score_ratio: f32,
 
     /// 调试模式
     #[clap(help = "Debug model")]
