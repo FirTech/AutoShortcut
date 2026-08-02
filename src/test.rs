@@ -1,8 +1,16 @@
 use super::*;
-use crate::find_software_best_exe;
-use std::fs::File;
-use std::path::Path;
+use std::fs::{self, File};
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
+
+fn score_candidates(
+    app_root: &Path,
+    candidates: &[PathBuf],
+    config: Option<&ConfigInfo>,
+    score_ratio: f32,
+) -> Option<(PathBuf, PathBuf)> {
+    find_software_best_exe_from_candidates(app_root, candidates, config, score_ratio)
+}
 
 #[cfg(test)]
 mod tests {
@@ -263,12 +271,11 @@ fn test_scoring_config_match() {
     config_info.shortcut.push(lnk);
 
     // 调用评分函数
-    let result = find_software_best_exe(
+    let result = score_candidates(
         &test_dir,
+        std::slice::from_ref(&test_exe),
         Some(&config_info),
-        temp_dir.path(),
         0.3, // 配置匹配不应抬高自动识别阈值
-        true,
     );
 
     // 应该找到匹配的文件
@@ -292,7 +299,7 @@ fn test_scoring_name_parent_match() {
     let other_exe = app_dir.join("Other.exe");
     File::create(&other_exe).unwrap();
 
-    let result = find_software_best_exe(&app_dir, None, temp_dir.path(), 0.0, true);
+    let result = score_candidates(&app_dir, &[myapp_exe.clone(), other_exe], None, 0.0);
 
     assert!(result.is_some(), "应该找到一个 exe 文件");
     let (_, found_path) = result.unwrap();
@@ -312,7 +319,7 @@ fn test_scoring_gui_preference() {
     let test_exe = app_dir.join("test.exe");
     File::create(&test_exe).unwrap();
 
-    let result = find_software_best_exe(&app_dir, None, temp_dir.path(), 0.0, true);
+    let result = score_candidates(&app_dir, std::slice::from_ref(&test_exe), None, 0.0);
 
     // 测试应该能够运行（即使找不到真正的 GUI 程序）
     // 由于创建的不是真正的 exe，可能找不到任何文件
@@ -344,13 +351,104 @@ fn test_scoring_ignore_list() {
     config_info.ignore.push("uninstall".to_string());
     config_info.ignore.push("setup".to_string());
 
-    let result = find_software_best_exe(&app_dir, Some(&config_info), temp_dir.path(), 0.0, true);
+    let result = score_candidates(
+        &app_dir,
+        &[main_exe.clone(), uninstall_exe, setup_exe],
+        Some(&config_info),
+        0.0,
+    );
 
     // 如果找到文件，应该是 Main.exe（不被忽略的）
     if result.is_some() {
         let (_, found_path) = result.unwrap();
         assert_eq!(found_path, main_exe, "应该忽略 uninstall 和 setup 文件");
     }
+}
+
+#[test]
+fn test_scoring_rejects_installer_without_configuration() {
+    let temp_dir = TempDir::new().unwrap();
+    let app_dir = temp_dir.path().join("FastCopy");
+    fs::create_dir_all(&app_dir).unwrap();
+
+    let main_exe = app_dir.join("FastCopy.exe");
+    File::create(&main_exe).unwrap();
+    File::create(app_dir.join("setup.exe")).unwrap();
+    File::create(app_dir.join("uninstall.exe")).unwrap();
+
+    let result = score_candidates(
+        &app_dir,
+        &[
+            main_exe.clone(),
+            app_dir.join("setup.exe"),
+            app_dir.join("uninstall.exe"),
+        ],
+        None,
+        0.0,
+    );
+
+    assert_eq!(result.map(|(_, executable)| executable), Some(main_exe));
+}
+
+#[test]
+fn test_automatic_role_penalties_cover_support_processes() {
+    for (name, expected) in [
+        ("unins000.exe", -180),
+        ("ProductUpdater.exe", -180),
+        ("MaintenanceService.exe", -180),
+        ("Upgrade.exe", -180),
+        ("Listary.Diagnostics.exe", -100),
+        ("Listary.FileAppPlugin.DevTools.exe", -100),
+        ("IDMGrHlp.exe", -100),
+        ("devcon.exe", -100),
+        ("Product.exe", 0),
+    ] {
+        assert_eq!(
+            automatic_executable_role_penalty(Path::new(name)),
+            expected,
+            "unexpected role penalty for {name}"
+        );
+    }
+}
+
+#[test]
+fn test_app_root_creates_only_one_shortcut_for_descendant_helpers() {
+    let temp_dir = TempDir::new().unwrap();
+    let app_dir = temp_dir.path().join("GameViewer");
+    let setup_dir = app_dir.join("setup");
+    let shortcut_dir = temp_dir.path().join("links");
+    fs::create_dir_all(&setup_dir).unwrap();
+    File::create(app_dir.join("GameViewer.exe")).unwrap();
+    File::create(app_dir.join("GameViewer.dll")).unwrap();
+    File::create(setup_dir.join("GameViewer_Setup_1.exe")).unwrap();
+    File::create(setup_dir.join("GameViewer_Setup_2.exe")).unwrap();
+
+    auto_shortcut(
+        &app_dir,
+        Some(&shortcut_dir),
+        None,
+        false,
+        true,
+        false,
+        false,
+        false,
+        false,
+        true,
+        0.0,
+    )
+    .unwrap();
+
+    let shortcuts = WalkDir::new(shortcut_dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("lnk"))
+        })
+        .count();
+    assert_eq!(shortcuts, 1);
 }
 
 /// 测试评分算法 - 空目录
@@ -360,7 +458,7 @@ fn test_scoring_empty_directory() {
     let empty_dir = temp_dir.path().join("Empty");
     fs::create_dir_all(&empty_dir).unwrap();
 
-    let result = find_software_best_exe(&empty_dir, None, temp_dir.path(), 0.0, true);
+    let result = score_candidates(&empty_dir, &[], None, 0.0);
 
     assert!(result.is_none(), "空目录不应该返回任何文件");
 }
@@ -377,38 +475,15 @@ fn test_scoring_threshold() {
     File::create(&test_exe).unwrap();
 
     // 使用高阈值，应该过滤掉低分文件
-    let result = find_software_best_exe(
+    let result = score_candidates(
         &app_dir,
+        std::slice::from_ref(&test_exe),
         None,
-        temp_dir.path(),
         2.0, // 200% 的阈值，只有非常高的分才能通过
-        true,
     );
 
     // 小文件得分应该很低，被过滤掉
     assert!(result.is_none(), "高阈值应该过滤掉低分文件");
-}
-
-/// 测试评分算法 - 嵌套目录扫描
-#[test]
-fn test_scoring_nested_directories() {
-    let temp_dir = TempDir::new().unwrap();
-    let root_dir = temp_dir.path().join("Root");
-    fs::create_dir_all(&root_dir).unwrap();
-
-    let sub_dir = root_dir.join("SubApp");
-    fs::create_dir_all(&sub_dir).unwrap();
-
-    let deep_exe = sub_dir.join("deep.exe");
-    File::create(&deep_exe).unwrap();
-
-    let result = find_software_best_exe(&root_dir, None, temp_dir.path(), 0.0, true);
-
-    // 应该能扫描到子目录中的 exe
-    if result.is_some() {
-        let (_, found_path) = result.unwrap();
-        assert_eq!(found_path, deep_exe, "应该找到子目录中的 exe");
-    }
 }
 
 /// 测试评分算法 - 多个 exe 的评分选择
@@ -428,7 +503,12 @@ fn test_scoring_multiple_exe_selection() {
     let config_exe = app_dir.join("config.exe");
     File::create(&config_exe).unwrap();
 
-    let result = find_software_best_exe(&app_dir, None, temp_dir.path(), 0.0, true);
+    let result = score_candidates(
+        &app_dir,
+        &[myapp_exe.clone(), helper_exe, config_exe],
+        None,
+        0.0,
+    );
 
     if result.is_some() {
         let (_, found_path) = result.unwrap();
@@ -436,9 +516,9 @@ fn test_scoring_multiple_exe_selection() {
     }
 }
 
-/// 测试评分算法 - 递归查找应用根目录
+/// 测试评分算法 - 保持分析器给出的应用根目录
 #[test]
-fn test_scoring_app_root_detection() {
+fn test_scoring_preserves_supplied_app_root() {
     let temp_dir = TempDir::new().unwrap();
     let install_dir = temp_dir.path().join("Program Files").join("MyApp");
     fs::create_dir_all(&install_dir).unwrap();
@@ -450,17 +530,13 @@ fn test_scoring_app_root_detection() {
     let dll_path = install_dir.join("myapp.dll");
     File::create(&dll_path).unwrap();
 
-    let result = find_software_best_exe(&install_dir, None, temp_dir.path(), 0.0, true);
+    let result = score_candidates(&install_dir, std::slice::from_ref(&exe_path), None, 0.0);
 
     // 应该能找到 exe
     if result.is_some() {
         let (app_root, found_path) = result.unwrap();
         assert_eq!(found_path, exe_path, "应该找到 exe 文件");
-        // app_root 可能是安装目录或其父目录
-        assert!(
-            app_root == install_dir || app_root == temp_dir.path().join("Program Files"),
-            "应用根目录应该是 exe 所在目录或其父目录"
-        );
+        assert_eq!(app_root, install_dir);
     }
 }
 
@@ -474,7 +550,7 @@ fn test_scoring_special_characters() {
     let exe_path = app_dir.join("MyApp_2024.exe");
     File::create(&exe_path).unwrap();
 
-    let result = find_software_best_exe(&app_dir, None, temp_dir.path(), 0.0, true);
+    let result = score_candidates(&app_dir, std::slice::from_ref(&exe_path), None, 0.0);
 
     // 应该能处理特殊字符
     if result.is_some() {

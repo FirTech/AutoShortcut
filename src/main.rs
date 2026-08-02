@@ -6,14 +6,18 @@
 mod cli;
 mod config;
 mod console;
+mod directory;
 mod template;
 mod utils;
 
 #[cfg(test)]
 mod test;
 
-use crate::config::{ConfigInfo, Lnk, Template, DEFAULT_NAME_TEMPLATE};
-use crate::console::{write_console, ConsoleType};
+use crate::config::{ConfigInfo, DEFAULT_NAME_TEMPLATE, Lnk, Template};
+use crate::console::{ConsoleType, write_console};
+use crate::directory::{
+    DirectoryAnalysis, DirectoryRole, analyze_directory_tree, is_component_directory,
+};
 use crate::template::process_template;
 use crate::utils::{
     create_shortcut, exe_has_signature, get_exe_description, get_native_arch, get_program_arch,
@@ -21,19 +25,17 @@ use crate::utils::{
     launched_from_explorer, matches_glob, name_similarity, parse_hotkey, parse_icon_spec,
     replace_ignore_case, resolve_relative_path, validate_shortcut_name_for_config,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::Parser;
 use rust_i18n::{set_locale, t};
-use std::collections::HashSet;
+use std::env;
 use std::fs::create_dir_all;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
-use std::{env, fs};
 use sys_locale::get_locale;
 use walkdir::WalkDir;
 use windows::Win32::System::SystemInformation::{
@@ -127,7 +129,6 @@ pub fn auto_shortcut(
     use_filename: bool,
     score_ratio: f32,
 ) -> Result<()> {
-    // 读取配置文件信息
     let mut config_info = None;
     let mut score_ratio = score_ratio;
     let mut only_match = only_match;
@@ -138,65 +139,51 @@ pub fn auto_shortcut(
     if let Some(config) = config_path {
         match ConfigInfo::parse_config_file(config) {
             Ok(mut config) => {
-                if config.only_match {
-                    only_match = true;
-                }
+                only_match |= config.only_match;
+                use_filename |= config.use_filename;
+                install_script |= config.install;
+                install_parallel |= config.install_parallel;
 
-                if config.use_filename {
-                    use_filename = true;
+                if config.score_ratio.is_some_and(|ratio| ratio > 1.0) {
+                    write_console(
+                        ConsoleType::Warning,
+                        &t!(
+                            "config.invalid_ratio",
+                            ratio = config.score_ratio.unwrap_or_default()
+                        ),
+                    );
+                    config.score_ratio = None;
                 }
-
-                if config.install {
-                    install_script = true;
-                }
-
-                if config.install_parallel {
-                    install_parallel = true;
-                }
-
-                // 判断评分阈值是否合法
-                if let Some(ratio) = config.score_ratio {
-                    if ratio > 1.0 {
-                        write_console(
-                            ConsoleType::Warning,
-                            &t!("config.invalid_ratio", ratio = ratio),
-                        );
-                        config.score_ratio = None;
-                    }
-                }
-
-                // 指定评分阈值百分比
                 if let Some(ratio) = config.score_ratio {
                     score_ratio = ratio;
                 }
-
-                // 验证配置文件中快捷方式名称是否合法
-                for ln in &config.shortcut {
-                    if let Some(ref provided_name) = ln.name {
-                        if !validate_shortcut_name_for_config(provided_name) {
-                            write_console(
-                                ConsoleType::Warning,
-                                &t!("config.invalid_name", name = provided_name),
-                            );
-                        }
+                for shortcut in &config.shortcut {
+                    if shortcut
+                        .name
+                        .as_ref()
+                        .is_some_and(|name| !validate_shortcut_name_for_config(name))
+                    {
+                        write_console(
+                            ConsoleType::Warning,
+                            &t!(
+                                "config.invalid_name",
+                                name = shortcut.name.as_deref().unwrap_or_default()
+                            ),
+                        );
                     }
                 }
-
-                config_info = Some(config.clone());
+                config_info = Some(config);
             }
-            Err(e) => {
+            Err(error) => {
                 write_console(
                     ConsoleType::Error,
-                    &format!("{}: {}", &t!("config.parse_failed"), e),
+                    &format!("{}: {}", &t!("config.parse_failed"), error),
                 );
                 return Err(anyhow!("Configuration file parsing failed"));
             }
         }
     }
 
-    let identified_app_roots: Arc<Mutex<HashSet<PathBuf>>> = Arc::new(Mutex::new(HashSet::new()));
-
-    // 排除系统目录
     const SYSTEM_EXCLUDED_DIRS: &[&str] = &[
         "$RECYCLE.BIN",
         "System Volume Information",
@@ -204,455 +191,214 @@ pub fn auto_shortcut(
         "Config.Msi",
         "MSOCache",
     ];
-
-    let mut all_excluded = Vec::new();
-    all_excluded.extend(SYSTEM_EXCLUDED_DIRS.iter().map(|s| s.to_string()));
-
-    // 配置文件自身路径
-    if let Some(config) = config_path {
-        all_excluded.push(config.to_string_lossy().to_string());
+    let mut excluded = SYSTEM_EXCLUDED_DIRS
+        .iter()
+        .map(|value| format!("={value}"))
+        .collect::<Vec<_>>();
+    if let Some(config_path) = config_path {
+        excluded.push(config_path.to_string_lossy().to_string());
     }
-
-    // 配置文件中的排除路径
     if let Some(config) = &config_info {
-        all_excluded.extend(config.ignore.clone());
+        excluded.extend(config.ignore.iter().cloned());
     }
 
-    // 主循环: 遍历所有文件（包括子目录）
-    for entry_result in WalkDir::new(target_path).into_iter().filter_entry({
-        let roots_for_filter = Arc::clone(&identified_app_roots);
-        let config_info = config_info.clone();
-
-        move |entry| {
-            let path = entry.path();
-
-            // 排除：特殊目录
-            if entry.file_type().is_dir() {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if SYSTEM_EXCLUDED_DIRS
-                        .iter()
-                        .any(|&ex| ex.eq_ignore_ascii_case(name))
-                    {
-                        if DEBUG.load(Ordering::Relaxed) {
-                            write_console(
-                                ConsoleType::Debug,
-                                &t!("scan.ignore", path = path.display()),
-                            );
-                        }
-                        return false;
-                    }
-                }
-            }
-
-            // 排除: 自定义排除
-            if let Some(cfg) = &config_info {
-                let file_name = path.file_name().map(|n| n.to_string_lossy().to_lowercase());
-
-                // 检查是否需要忽略此文件或目录
-                if file_name.is_some_and(|name| {
-                    cfg.ignore.iter().any(|kw| {
-                        // 尝试将关键词解析为绝对路径
-                        if let Ok(keyword_path) = PathBuf::from(kw).canonicalize() {
-                            // 对当前完整路径进行规范化并比较
-                            if let Ok(current_path) = path.canonicalize() {
-                                current_path == keyword_path
-                            } else {
-                                // 如果无法规范化当前路径，回退到文件名匹配
-                                name.contains(kw.to_lowercase().as_str())
-                            }
-                        } else {
-                            // 不是绝对路径，使用文件名包含匹配
-                            name.contains(kw.to_lowercase().as_str())
-                        }
-                    })
-                }) {
-                    if DEBUG.load(Ordering::Relaxed) {
-                        write_console(
-                            ConsoleType::Debug,
-                            &t!("scan.ignore", path = path.display()),
-                        );
-                    }
-                    return false;
-                }
-            }
-
-            // 剪枝算法
-            let roots = roots_for_filter.lock().unwrap();
-            if roots.iter().any(|root| path.starts_with(root)) {
-                if DEBUG.load(Ordering::Relaxed) {
-                    write_console(ConsoleType::Debug, &t!("scan.prune", path = path.display()));
-                }
-                return false;
-            }
-
-            true
-        }
-    }) {
-        // 判断是否正常访问路径
-        let entry = match entry_result {
-            Ok(e) => e,
-            Err(e) => {
-                if !list_mode {
-                    write_console(ConsoleType::Warning, &t!("file.access_failed", error = e));
-                }
-                continue;
-            }
-        };
-        let file_path = entry.path();
-
-        // 仅配置文件匹配模式
-        if only_match && entry.file_type().is_dir() {
-            continue;
-        }
-
-        // 自动识别主程序逻辑
-        if entry.file_type().is_dir() {
-            if is_category_dir(file_path) {
-                if !list_mode {
-                    write_console(
-                        ConsoleType::Info,
-                        &t!("directory.category", path = file_path.display()),
-                    );
-                }
-                continue;
-            }
-
-            // 判断是否为单文件目录
-            if is_single_file_dir(file_path, Some(&all_excluded)) {
-                // 单文件程序目录
-                if !list_mode {
-                    write_console(
-                        ConsoleType::Info,
-                        &t!("directory.single_file", path = file_path.display()),
-                    );
-                }
-
-                let mut roots = identified_app_roots.lock().unwrap();
-                if roots.insert(file_path.to_path_buf()) {
-                    // println!("剪枝: {}", file_path.display());
-                    for entry in WalkDir::new(file_path)
-                        .max_depth(1)
-                        .into_iter()
-                        .filter_map(Result::ok)
-                        .filter(|file| {
-                            file.path().is_file()
-                                && file
-                                    .path()
-                                    .extension()
-                                    .unwrap_or_default()
-                                    .eq_ignore_ascii_case("exe")
-                        })
-                    {
-                        let path = entry.path();
-
-                        // 单文件排除: 自定义排除
-                        if let Some(cfg) = &config_info {
-                            // 如果文件名包含任一 ignore 关键字，就跳过（返回 false）
-                            if path
-                                .file_name()
-                                .map(|n| n.to_string_lossy().to_lowercase())
-                                .is_some_and(|name| {
-                                    cfg.ignore
-                                        .iter()
-                                        .any(|kw| name.contains(&kw.to_lowercase()))
-                                })
-                            {
-                                if DEBUG.load(Ordering::Relaxed) {
-                                    write_console(
-                                        ConsoleType::Debug,
-                                        &t!("scan.ignore", path = path.display()),
-                                    );
-                                }
-                                continue;
-                            }
-                        }
-
-                        if list_mode {
-                            println!("{}", path.display());
-                        }
-
-                        // 运行程序
-                        if start {
-                            write_console(
-                                ConsoleType::Info,
-                                &t!("shortcut.start", path = path.display()),
-                            );
-                            Command::new(path)
-                                .creation_flags(0x08000000)
-                                .current_dir(path.parent().unwrap())
-                                .spawn()
-                                .ok();
-
-                            // 如果命令行没有指定 lnk_path，且配置里也没有对应的 dest，则跳过后续处理
-                            if lnk_path.is_none()
-                                && config_info
-                                    .as_ref()
-                                    .and_then(|cfg| Lnk::get_lnk_info(path, &cfg.shortcut))
-                                    .as_ref()
-                                    .and_then(|li| li.dest.as_ref())
-                                    .is_none()
-                            {
-                                continue;
-                            }
-                        }
-
-                        if list_mode {
-                            continue;
-                        }
-
-                        // 创建快捷方式
-                        let lnk_info = config_info
-                            .as_ref()
-                            .and_then(|cfg| Lnk::get_lnk_info(path, &cfg.shortcut));
-                        let template = config_info.as_ref().and_then(|cfg| cfg.template.clone());
-
-                        match create_program_shortcut(
-                            path,
-                            lnk_path,
-                            lnk_info,
-                            template,
-                            use_filename,
-                            create_dir,
-                        ) {
-                            Ok((name, _path)) => write_console(
-                                ConsoleType::Success,
-                                &t!(
-                                    "shortcut.create_success",
-                                    name = name,
-                                    path = path.display()
-                                ),
-                            ),
-                            Err(_) => write_console(
-                                ConsoleType::Error,
-                                &t!("shortcut.create_failed", path = path.display()),
-                            ),
-                        };
-                    }
-                } else {
-                    if DEBUG.load(Ordering::Relaxed) {
-                        write_console(
-                            ConsoleType::Debug,
-                            &t!("scan.prune", path = file_path.display()),
-                        );
-                    }
-                };
-            } else if is_hybrid_software_dir(file_path, &all_excluded) {
-                // 单文件软件、绿色软件混合目录
-                if !list_mode {
-                    write_console(
-                        ConsoleType::Info,
-                        &t!("directory.hybrid", path = file_path.display()),
-                    );
-                }
-                continue;
-            } else {
-                // 绿色软件目录
-                if !list_mode {
-                    write_console(
-                        ConsoleType::Info,
-                        &t!("directory.green", path = file_path.display()),
-                    );
-                }
-
-                let mut roots_guard = identified_app_roots.lock().unwrap();
-
-                // 遍历全部exe进行打分
-                if let Some((suggested_app_root, exe_path)) = find_software_best_exe(
-                    file_path,
-                    config_info.clone().as_ref(),
-                    target_path,
-                    score_ratio,
-                    list_mode,
-                ) {
-                    // 找到了最佳EXE，并且它的根目录是新的（没有被处理过）
-                    if roots_guard.insert(suggested_app_root.clone()) {
-                        // 运行安装脚本
-                        if install_script {
-                            run_install_scripts(
-                                &suggested_app_root,
-                                config_info
-                                    .as_ref()
-                                    .map(|config| config.scripts.clone())
-                                    .as_deref(),
-                                install_parallel,
-                            );
-                        }
-
-                        if list_mode {
-                            println!("{}", exe_path.display());
-                            continue;
-                        }
-
-                        // 运行程序
-                        if start {
-                            write_console(
-                                ConsoleType::Info,
-                                &t!("shortcut.start", path = exe_path.display()),
-                            );
-                            Command::new(&exe_path)
-                                .creation_flags(0x08000000)
-                                .current_dir(exe_path.parent().unwrap())
-                                .spawn()
-                                .ok();
-
-                            // 如果命令行没有指定 lnk_path，且配置里也没有对应的 dest，则跳过后续处理
-                            if lnk_path.is_none()
-                                && config_info
-                                    .as_ref()
-                                    .and_then(|cfg| Lnk::get_lnk_info(&exe_path, &cfg.shortcut))
-                                    .as_ref()
-                                    .and_then(|li| li.dest.as_ref())
-                                    .is_none()
-                            {
-                                continue;
-                            }
-                        }
-
-                        if list_mode {
-                            continue;
-                        }
-
-                        // 创建快捷方式
-                        let lnk_info = config_info
-                            .as_ref()
-                            .and_then(|cfg| Lnk::get_lnk_info(&exe_path, &cfg.shortcut));
-                        let template = config_info.as_ref().and_then(|cfg| cfg.template.clone());
-
-                        match create_program_shortcut(
-                            &exe_path,
-                            lnk_path,
-                            lnk_info,
-                            template,
-                            use_filename,
-                            create_dir,
-                        ) {
-                            Ok((name, _path)) => write_console(
-                                ConsoleType::Success,
-                                &t!(
-                                    "shortcut.create_success",
-                                    name = name,
-                                    path = exe_path.display()
-                                ),
-                            ),
-                            Err(_) => write_console(
-                                ConsoleType::Error,
-                                &t!("shortcut.create_failed", path = exe_path.display()),
-                            ),
-                        };
-                    } else {
-                        // 已处理软件根目录
-                        if DEBUG.load(Ordering::Relaxed) {
-                            write_console(
-                                ConsoleType::Debug,
-                                &t!("scan.prune", path = suggested_app_root.display()),
-                            );
-                        }
-                    }
-                } else {
-                    // 绿色软件目录中，根据评分规则没有识别到主程序
-                    if !list_mode {
-                        write_console(
-                            ConsoleType::Warning,
-                            &t!("scan.main_not_recognized", path = file_path.display()),
-                        );
-                    }
-                    roots_guard.insert(file_path.to_path_buf());
-                }
-            }
-        } else if entry.file_type().is_file()
-            && file_path
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
-        {
-            // 匹配配置文件模式
-            if let Some(cfg) = &config_info {
-                if only_match && Lnk::get_lnk_info(file_path, &cfg.shortcut).is_none() {
-                    continue;
-                }
-            }
-
-            // 情况1: “绿色软件”打分失败，识别为可能的绿色根目录，却又在 collect_and_score_best_exe_in_root() 里因为所有 EXE 分数都低于阈值而拿不出一个“最佳主程序”
-            // 情况2: 所有其他未被剪枝、又没被当作应用根的 exe,在深层子目录里有临时 exe、测试文件、脚本等，
-
-            if list_mode {
-                println!("{}", file_path.display());
-            }
-
-            // 运行程序
-            if start {
-                write_console(
-                    ConsoleType::Info,
-                    &t!("shortcut.start", path = file_path.display()),
-                );
-                Command::new(file_path)
-                    .creation_flags(0x08000000)
-                    .current_dir(file_path.parent().unwrap())
-                    .spawn()
-                    .ok();
-
-                // 如果命令行没有指定 lnk_path，且配置里也没有对应的 dest，则跳过后续处理
-                if lnk_path.is_none()
-                    && config_info
-                        .as_ref()
-                        .and_then(|cfg| Lnk::get_lnk_info(file_path, &cfg.shortcut))
-                        .as_ref()
-                        .and_then(|li| li.dest.as_ref())
-                        .is_none()
-                {
-                    continue;
-                }
-            }
-
-            if list_mode {
-                continue;
-            }
-
-            // 创建快捷方式
-            let lnk_info = config_info
-                .as_ref()
-                .and_then(|cfg| Lnk::get_lnk_info(file_path, &cfg.shortcut));
-            let template = config_info.as_ref().and_then(|cfg| cfg.template.clone());
-
-            match create_program_shortcut(
-                file_path,
-                lnk_path,
-                lnk_info,
-                template,
-                use_filename,
-                create_dir,
-            ) {
-                Ok((name, _path)) => write_console(
-                    ConsoleType::Success,
-                    &t!(
-                        "shortcut.create_success",
-                        name = name,
-                        path = file_path.display()
-                    ),
-                ),
-                Err(_) => write_console(
-                    ConsoleType::Error,
-                    &t!("shortcut.create_failed", path = file_path.display()),
-                ),
-            };
-        }
-    }
-
+    let analysis = analyze_directory_tree(target_path, &excluded);
+    let context = AutoExecutionContext {
+        lnk_path,
+        config_info: config_info.as_ref(),
+        only_match,
+        create_dir,
+        install_script,
+        install_parallel,
+        start,
+        list_mode,
+        use_filename,
+        score_ratio,
+    };
+    execute_directory(&analysis, &context);
     Ok(())
 }
 
-/// 仅通过配置文件创建快捷方式
-///
-/// # 参数
-///
-/// - `config_path` - 配置文件路径
-/// - `install` - 是否执行安装脚本
-/// - `install_parallel` - 是否并行执行安装脚本
-/// - `start` - 是否运行程序
-/// - `use_name` - 是否使用程序名称作为快捷方式名称
-///
-/// # 返回值
-///
-/// 如果创建快捷方式成功，返回 `Ok(())`；否则返回 `Err`。
+/// Runtime options shared by recursive directory execution.
+struct AutoExecutionContext<'a> {
+    lnk_path: Option<&'a Path>,
+    config_info: Option<&'a ConfigInfo>,
+    only_match: bool,
+    create_dir: bool,
+    install_script: bool,
+    install_parallel: bool,
+    start: bool,
+    list_mode: bool,
+    use_filename: bool,
+    score_ratio: f32,
+}
+
+fn execute_directory(analysis: &DirectoryAnalysis, context: &AutoExecutionContext<'_>) {
+    if DEBUG.load(Ordering::Relaxed) {
+        write_console(
+            ConsoleType::Debug,
+            &format!(
+                "[Directory] {} => {:?}/{:?} ({:?})",
+                analysis.path.display(),
+                analysis.role,
+                analysis.confidence,
+                analysis.evidence
+            ),
+        );
+    }
+
+    if context.only_match {
+        for executable in &analysis.direct_exes {
+            if context
+                .config_info
+                .and_then(|config| Lnk::get_lnk_info(executable, &config.shortcut))
+                .is_some()
+            {
+                process_program(executable, context);
+            }
+        }
+        for child in &analysis.children {
+            execute_directory(child, context);
+        }
+        return;
+    }
+
+    match analysis.role {
+        DirectoryRole::AppRoot => {
+            log_directory_role("directory.green", analysis, context);
+            process_app_root(analysis, context);
+        }
+        DirectoryRole::ExeCollection => {
+            log_directory_role("directory.single_file", analysis, context);
+            for executable in &analysis.direct_exes {
+                process_program(executable, context);
+            }
+        }
+        DirectoryRole::Container => {
+            log_directory_role("directory.category", analysis, context);
+            for child in &analysis.children {
+                execute_directory(child, context);
+            }
+        }
+        DirectoryRole::Mixed => {
+            log_directory_role("directory.hybrid", analysis, context);
+            if analysis.has_self_app() {
+                process_app_root(analysis, context);
+            } else {
+                for executable in &analysis.direct_exes {
+                    process_program(executable, context);
+                }
+            }
+            for child in &analysis.children {
+                if !is_component_directory(&child.path) {
+                    execute_directory(child, context);
+                }
+            }
+        }
+        DirectoryRole::Unknown => {
+            for child in &analysis.children {
+                execute_directory(child, context);
+            }
+        }
+    }
+}
+
+fn log_directory_role(key: &str, analysis: &DirectoryAnalysis, context: &AutoExecutionContext<'_>) {
+    if !context.list_mode {
+        write_console(ConsoleType::Info, &t!(key, path = analysis.path.display()));
+    }
+}
+
+fn process_app_root(analysis: &DirectoryAnalysis, context: &AutoExecutionContext<'_>) {
+    let selected = find_software_best_exe_from_candidates(
+        &analysis.path,
+        &analysis.owned_exes,
+        context.config_info,
+        context.score_ratio,
+    );
+    let Some((app_root, executable)) = selected else {
+        if !context.list_mode {
+            write_console(
+                ConsoleType::Warning,
+                &t!("scan.main_not_recognized", path = analysis.path.display()),
+            );
+        }
+        return;
+    };
+
+    if context.install_script {
+        run_install_scripts(
+            &app_root,
+            context.config_info.map(|config| config.scripts.as_slice()),
+            context.install_parallel,
+        );
+    }
+    process_program(&executable, context);
+}
+
+fn process_program(program_path: &Path, context: &AutoExecutionContext<'_>) {
+    if context.list_mode {
+        println!("{}", program_path.display());
+    }
+
+    if context.start {
+        write_console(
+            ConsoleType::Info,
+            &t!("shortcut.start", path = program_path.display()),
+        );
+        if let Some(parent) = program_path.parent() {
+            Command::new(program_path)
+                .creation_flags(0x08000000)
+                .current_dir(parent)
+                .spawn()
+                .ok();
+        }
+
+        let has_config_destination = context
+            .config_info
+            .and_then(|config| Lnk::get_lnk_info(program_path, &config.shortcut))
+            .as_ref()
+            .and_then(|shortcut| shortcut.dest.as_ref())
+            .is_some();
+        if context.lnk_path.is_none() && !has_config_destination {
+            return;
+        }
+    }
+
+    if context.list_mode {
+        return;
+    }
+
+    let shortcut = context
+        .config_info
+        .and_then(|config| Lnk::get_lnk_info(program_path, &config.shortcut));
+    let template = context
+        .config_info
+        .and_then(|config| config.template.clone());
+    match create_program_shortcut(
+        program_path,
+        context.lnk_path,
+        shortcut,
+        template,
+        context.use_filename,
+        context.create_dir,
+    ) {
+        Ok((name, _)) => write_console(
+            ConsoleType::Success,
+            &t!(
+                "shortcut.create_success",
+                name = name,
+                path = program_path.display()
+            ),
+        ),
+        Err(_) => write_console(
+            ConsoleType::Error,
+            &t!("shortcut.create_failed", path = program_path.display()),
+        ),
+    }
+}
+
+/// Creates shortcuts exclusively from explicit configuration entries.
 fn config_shortcut(
     config_path: PathBuf,
     install: bool,
@@ -735,135 +481,11 @@ fn config_shortcut(
     Ok(())
 }
 
-/// 检查目录是否包含常见的应用程序支持文件或子目录
-///
-/// 不进行PE解析，只看文件/目录名和类型
-///
-/// # 参数
-///
-/// - `dir_path` - 要检查的目录路径
-///
-/// # 返回值
-///
-/// 如果目录符合应用程序结构条件，返回 `true`；否则返回 `false`。
-fn contains_app_structure_lightweight(dir_path: &Path) -> bool {
-    if let Ok(entries) = fs::read_dir(dir_path) {
-        let mut has_exe = false;
-        let mut has_support_files = false; //.dll,.ini,.json,.xml,.dat,.cfg,.conf
-        let mut has_common_subdirs = false; // bin, lib, data, program, assets, resources, content, modules, plugins, drivers
-        let mut has_doc_files = false; // README.txt, LICENSE.txt, EULA.txt, CHANGELOG.txt
-        let mut exe_count = 0;
-
-        for entry_result in entries {
-            let entry = match entry_result {
-                Ok(e) => e,
-                Err(_) => continue, // 忽略无法读取的条目
-            };
-            let path = entry.path();
-            let file_type = match entry.file_type() {
-                Ok(ft) => ft,
-                Err(_) => continue,
-            };
-
-            if file_type.is_file() {
-                if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-                    let lower_ext = ext.to_ascii_lowercase();
-                    if lower_ext == "exe" {
-                        has_exe = true;
-                        exe_count += 1;
-                    } else if [
-                        "dll", "pak", "ini", "json", "xml", "yaml", "dat", "cfg", "conf", "log",
-                        "reg", "key", "cupf",
-                    ]
-                    .contains(&lower_ext.as_str())
-                    {
-                        has_support_files = true;
-                    } else if ["txt", "md", "pdf"].contains(&lower_ext.as_str()) {
-                        if let Some(file_stem) = path.file_stem().and_then(|s| s.to_str()) {
-                            let lower_stem = file_stem.to_ascii_lowercase();
-                            if ["readme", "license", "eula", "changelog"]
-                                .contains(&lower_stem.as_str())
-                            {
-                                has_doc_files = true;
-                            }
-                        }
-                    }
-                }
-            } else if file_type.is_dir() {
-                if let Some(dir_name) = path.file_name().and_then(|s| s.to_str()) {
-                    let lower_dir_name = dir_name.to_ascii_lowercase();
-                    // 增加更多常见的应用程序子目录 [1, 2, 3]
-                    if [
-                        "bin",
-                        "lib",
-                        "data",
-                        "program",
-                        "assets",
-                        "resources",
-                        "content",
-                        "modules",
-                        "plugins",
-                        "drivers",
-                    ]
-                    .contains(&lower_dir_name.as_str())
-                    {
-                        has_common_subdirs = true;
-                    }
-                }
-            }
-        }
-
-        // 判断当前目录是否是常见的组件文件夹名
-        let is_component_folder_name = dir_path.file_name().is_some_and(|n| {
-            let lower_name = n.to_string_lossy().to_ascii_lowercase();
-            // 常见的组件目录名，这些通常不是应用程序的最高层根目录
-            [
-                "bin",
-                "program",
-                "executables",
-                "x64",
-                "win64",
-                "modules",
-                "plugins",
-                "drivers",
-            ]
-            .contains(&lower_name.as_str())
-        });
-
-        // 规则组合：
-        // 1. 包含EXE，且有支持文件或常见子目录 (最常见的多文件应用)
-        // 2. 包含EXE，且有常见文档文件 (一些简单的便携式应用)
-        // 3. 包含多个EXE，且目录名不是组件文件夹 (例如“硬件检测”目录)
-        return
-            // Rule 1
-            (has_exe && (has_support_files || has_common_subdirs)) ||
-                // Rule 2
-                (has_exe && has_doc_files) ||
-                // Rule 3 (for multi-single-file apps)
-                (exe_count > 1 && !is_component_folder_name);
-    }
-    false
-}
-
-/// 在绿色软件目录中收集所有EXE并评分，选出最佳的EXE文件
-///
-/// # 参数
-///
-/// - `app_root_path` - 绿色软件目录的根路径
-/// - `config_info` - 可选的配置信息，用于忽略某些文件
-/// - `initial_scan_root` - 初始扫描的根路径，用于确定扫描范围
-/// - `score_ratio` - 评分比例，用于调整评分权重
-/// - `list_mode` - 是否以列表模式运行，用于控制输出
-///
-/// # 返回值
-///
-/// 如果找到最佳的EXE文件，返回 `Some((best_exe_path, best_exe_name))`；否则返回 `None`。
-fn find_software_best_exe(
+fn find_software_best_exe_from_candidates(
     app_root_path: &Path,
+    candidates: &[PathBuf],
     config_info: Option<&ConfigInfo>,
-    initial_scan_root: &Path,
     score_ratio: f32,
-    list_mode: bool,
 ) -> Option<(PathBuf, PathBuf)> {
     const CONFIG_MATCH_SCORE: i32 = 100;
     const NAME_PARENT_MAX_SCORE: i32 = 40;
@@ -890,21 +512,8 @@ fn find_software_best_exe(
     let mut best_score = 0;
     let system_arch_code = get_native_arch();
 
-    // 局部扫描：扫描当前目录及子目录（最大两层）
-    for entry_result in WalkDir::new(app_root_path).max_depth(2).into_iter() {
-        //
-        let entry = match entry_result {
-            Ok(e) => e,
-            Err(e) => {
-                if !list_mode {
-                    write_console(ConsoleType::Warning, &t!("file.access_failed", error = e));
-                }
-                continue;
-            }
-        };
-
-        let file_path = entry.path();
-
+    // Score only candidates owned by this analyzed application root.
+    for file_path in candidates {
         if file_path.is_file()
             && file_path
                 .extension()
@@ -950,34 +559,47 @@ fn find_software_best_exe(
             }
 
             // 配置文件名指定程序文件
-            if let Some(config_info) = &config_info {
-                if config_info.shortcut.iter().any(|kw| {
+            let explicit_config_match = config_info.is_some_and(|config_info| {
+                config_info.shortcut.iter().any(|kw| {
                     let exec_cfg = PathBuf::from(&kw.exec);
                     let full_path = if exec_cfg.is_absolute() {
                         exec_cfg.clone()
                     } else {
                         file_path.parent().unwrap().join(&exec_cfg)
                     };
-                    full_path == file_path
-                }) {
-                    score += CONFIG_MATCH_SCORE;
-                    breakdown.push(("config_match", CONFIG_MATCH_SCORE));
+                    full_path == *file_path
+                })
+            });
+            if explicit_config_match {
+                score += CONFIG_MATCH_SCORE;
+                breakdown.push(("config_match", CONFIG_MATCH_SCORE));
+            }
+
+            // 文件名与所在目录或应用根目录匹配
+            if let Some(file_stem) = file_path.file_stem().and_then(|stem| stem.to_str()) {
+                let parent_similarity = file_path
+                    .parent()
+                    .and_then(|parent| parent.file_name())
+                    .and_then(|name| name.to_str())
+                    .map_or(0.0, |name| name_similarity(file_stem, name));
+                let root_similarity = app_root_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map_or(0.0, |name| name_similarity(file_stem, name));
+                let similarity = parent_similarity.max(root_similarity);
+                if similarity >= MIN_NAME_SIMILARITY {
+                    let name_score = (similarity * NAME_PARENT_MAX_SCORE as f32).round() as i32;
+                    score += name_score;
+                    breakdown.push(("name_app_match", name_score));
                 }
             }
 
-            // 文件名与父目录名匹配
-            if let Some(parent_dir_name) = file_path
-                .parent()
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str())
-            {
-                if let Some(file_stem) = file_path.file_stem().and_then(|s| s.to_str()) {
-                    let similarity = name_similarity(file_stem, parent_dir_name);
-                    if similarity >= MIN_NAME_SIMILARITY {
-                        let name_score = (similarity * NAME_PARENT_MAX_SCORE as f32).round() as i32;
-                        score += name_score;
-                        breakdown.push(("name_parent_match", name_score));
-                    }
+            // Explicit configuration wins over automatic role heuristics.
+            if !explicit_config_match {
+                let penalty = automatic_executable_role_penalty(file_path);
+                if penalty != 0 {
+                    score += penalty;
+                    breakdown.push(("non_entry_role", penalty));
                 }
             }
 
@@ -1077,77 +699,7 @@ fn find_software_best_exe(
                 continue;
             }
 
-            // 识别应用程序根目录 (向上回溯)
-            let mut current_root_candidate = file_path
-                .parent()
-                .map_or_else(|| file_path.to_path_buf(), |p| p.to_path_buf());
-            let mut final_app_root = current_root_candidate.clone();
-            let mut depth_checked = 0;
-            let max_upward_depth = 3; // 向上回溯的最大层数
-
-            while let Some(parent) = current_root_candidate.parent() {
-                if depth_checked >= max_upward_depth
-                    || parent == initial_scan_root
-                    || parent.parent().is_none()
-                {
-                    break;
-                }
-
-                // 检查父目录是否具有应用结构特征
-                let mut parent_has_app_structure = false;
-                if let Ok(entries) = fs::read_dir(parent) {
-                    for entry_in_parent in entries.filter_map(|e| e.ok()) {
-                        let entry_path = entry_in_parent.path();
-                        if entry_path.is_file() {
-                            if let Some(ext) = entry_path.extension().and_then(|s| s.to_str()) {
-                                let lower_ext = ext.to_ascii_lowercase();
-                                if lower_ext == "dll"
-                                    || ["ini", "json", "xml", "dat", "cfg", "conf"]
-                                        .contains(&lower_ext.as_str())
-                                {
-                                    parent_has_app_structure = true;
-                                    break;
-                                }
-                            }
-                        } else if entry_path.is_dir() {
-                            if let Some(dir_name) = entry_path.file_name().and_then(|s| s.to_str())
-                            {
-                                let lower_dir_name = dir_name.to_ascii_lowercase();
-                                if [
-                                    "bin",
-                                    "lib",
-                                    "data",
-                                    "program",
-                                    "assets",
-                                    "resources",
-                                    "content",
-                                ]
-                                .contains(&lower_dir_name.as_str())
-                                {
-                                    parent_has_app_structure = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                let current_dir_name_lower = current_root_candidate
-                    .file_name()
-                    .map_or("".to_string(), |n| n.to_string_lossy().to_ascii_lowercase());
-                let is_component_folder = ["bin", "program", "executables", "x64", "win64"]
-                    .contains(&current_dir_name_lower.as_str());
-
-                if parent_has_app_structure || is_component_folder {
-                    final_app_root = parent.to_path_buf();
-                    current_root_candidate = parent.to_path_buf();
-                    depth_checked += 1;
-                } else {
-                    break;
-                }
-            }
-
-            let candidate = (final_app_root, PathBuf::from(file_path));
+            let candidate = (app_root_path.to_path_buf(), PathBuf::from(file_path));
 
             // 比较并更新最佳候选
             if score > best_score {
@@ -1159,259 +711,56 @@ fn find_software_best_exe(
     best_candidate
 }
 
-/// 判断程序目录是否为单文件程序目录
-///
-/// 条件：
-///  1. 根目录下至少有一个 exe，且除了 exe 之外没有其它文件
-///  2. 根目录没有子目录
-///
-/// # 参数
-///
-/// - `app_root` - 要检查的程序目录路径
-/// - `exclude_keyword` - 排除的关键词列表，用于过滤文件
-///
-/// # 返回值
-///
-/// 如果目录符合单文件程序目录条件，返回 `true`；否则返回 `false`。
-fn is_single_file_dir(app_root: &Path, exclude_keyword: Option<&[String]>) -> bool {
-    if let Ok(entries) = fs::read_dir(app_root) {
-        let mut exe_count = 0;
-        let mut other_file_count = 0;
-        let mut dir_count = 0;
-
-        for entry in entries.filter_map(|e| e.ok()) {
-            let path = entry.path();
-            // 检查文件名是否包含排除关键词
-            if let Some(exclude_keyword) = exclude_keyword {
-                if exclude_keyword.iter().any(|k| {
-                    if let Ok(keyword_path) = PathBuf::from(k).canonicalize() {
-                        // 判断绝对路径是否匹配
-                        if let Ok(current_path) = path.canonicalize() {
-                            current_path == keyword_path
-                        } else {
-                            path.display().to_string().to_lowercase().contains(k)
-                        }
-                    } else {
-                        // 不是绝对路径，使用现有的包含匹配逻辑
-                        path.display().to_string().to_lowercase().contains(k)
-                    }
-                }) {
-                    if DEBUG.load(Ordering::Relaxed) {
-                        write_console(
-                            ConsoleType::Debug,
-                            &t!("scan.ignore", path = path.display()),
-                        );
-                    }
-                    continue;
-                }
-            }
-
-            if path.is_file() {
-                if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-                    let lower_ext = ext.to_ascii_lowercase();
-                    if lower_ext == "exe" {
-                        exe_count += 1;
-                    } else if lower_ext != "ico" {
-                        // 允许.ico 文件存在
-                        other_file_count += 1;
-                    }
-                } else {
-                    other_file_count += 1; // 没有扩展名的文件也算作其他文件
-                }
-            } else if path.is_dir() {
-                dir_count += 1;
-            }
-        }
-        // 单文件程序：只有exe，没有其他文件（排除ico），没有子目录
-        return exe_count > 0 && other_file_count == 0 && dir_count == 0;
-    }
-    false
-}
-
-/// 判断目录是否为单文件程序、绿色软件的混合目录
-///
-/// 条件：
-///  1. 根目录下至少有一个 exe，且除了 exe 之外没有其它文件（视情况也可允许 .ico/.ini/.xml）
-///  2. 根目录的子目录是单文件目录或绿色软件目录
-///
-/// # 参数
-///
-/// - `dir` - 要检查的目录路径
-/// - `exclude_keyword` - 排除的关键词列表，用于过滤目录
-///
-/// # 返回值
-///
-/// 如果目录符合混合目录条件，返回 `true`；否则返回 `false`。
-fn is_hybrid_software_dir(dir: &Path, exclude_keyword: &[String]) -> bool {
-    /// 是否把某些文件扩展名视为“允许的辅助文件”，不会导致拒绝混合目录判定
-    const ALLOWED_ROOT_FILE_EXT: &[&str] = &["ico"];
-
-    /// 根目录中允许的“其它不认识文件”最大数量比例（例如 0.3 表示最多 30% 的根文件为未知类型）
-    const ROOT_UNKNOWN_FILE_RATIO_ALLOWED: f32 = 0.3;
-
-    /// 子目录中被识别为“应用子包”的占比阈值（例如 0.6 表示 >=60% 子目录是应用子包就认定为混合）
-    const SUBDIR_APP_RATIO_THRESHOLD: f32 = 0.8;
-
-    // 收集根目录一级 entries
-    let mut root_exe_count = 0usize;
-    let mut root_unknown_file_count = 0usize;
-    let mut root_allowed_file_count = 0usize;
-    let mut subdirs: Vec<PathBuf> = Vec::new();
-
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.filter_map(Result::ok) {
-            let p = entry.path();
-            if exclude_keyword.iter().any(|k| {
-                if let Ok(keyword_path) = PathBuf::from(k).canonicalize() {
-                    // 判断绝对路径
-                    if let Ok(current_path) = p.canonicalize() {
-                        current_path == keyword_path
-                    } else {
-                        p.display().to_string().to_lowercase().contains(k)
-                    }
-                } else {
-                    // 不是绝对路径，使用现有的包含匹配
-                    p.display().to_string().to_lowercase().contains(k)
-                }
-            }) {
-                continue;
-            }
-            if p.is_file() {
-                // extension 的处理要小心无扩展名的文件
-                if let Some(ext) = p
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .map(|s| s.to_ascii_lowercase())
-                {
-                    if ext == "exe" {
-                        root_exe_count += 1;
-                    } else if ALLOWED_ROOT_FILE_EXT.contains(&ext.as_str()) {
-                        root_allowed_file_count += 1;
-                    } else {
-                        root_unknown_file_count += 1;
-                    }
-                } else {
-                    // 无扩展名的文件视为未知
-                    root_unknown_file_count += 1;
-                }
-            } else if p.is_dir() {
-                subdirs.push(p);
-            }
-        }
-    }
-
-    // 前置条件：顶层需要至少有一个 exe（表明根会存放单文件程序）
-    if root_exe_count == 0 {
-        return false;
-    }
-
-    // 需要有至少一个子目录，才考虑是混合目录
-    if subdirs.is_empty() {
-        return false;
-    }
-
-    // 统计子目录被识别为绿色软件或单文件程序的数量
-    let mut app_subdirs = 0usize;
-    for sd in &subdirs {
-        // 对每个子目录使用已有的轻量检测函数（它们本身要足够稳健）
-        if contains_app_structure_lightweight(sd) || is_single_file_dir(sd, Some(exclude_keyword)) {
-            app_subdirs += 1;
-        }
-    }
-
-    let appdir_ratio = app_subdirs as f32 / subdirs.len() as f32;
-
-    // 根目录里未知文件占比过高时，应判定为非混合（例如存大量数据文件）
-    let total_root_files =
-        (root_exe_count + root_allowed_file_count + root_unknown_file_count) as f32;
-    let unknown_ratio = if total_root_files > 0.0 {
-        root_unknown_file_count as f32 / total_root_files
-    } else {
-        0.0
+fn automatic_executable_role_penalty(file_path: &Path) -> i32 {
+    let Some(stem) = file_path.file_stem().and_then(|stem| stem.to_str()) else {
+        return 0;
     };
-    if unknown_ratio > ROOT_UNKNOWN_FILE_RATIO_ALLOWED {
-        // 根目录里有过多未知文件，保守认为不是混合软件目录
-        return false;
+    let stem = stem.to_ascii_lowercase();
+
+    const STRONG_NEGATIVE: &[&str] = &[
+        "uninstall",
+        "unins",
+        "setup",
+        "installer",
+        "updater",
+        "update",
+        "upgrade",
+        "maintenance",
+        "crashpad",
+        "cleanup",
+    ];
+    if STRONG_NEGATIVE.iter().any(|token| stem.contains(token)) {
+        return -180;
     }
 
-    // 最终判定：子目录中大多数为应用包，或至少有足够数量的 app 子目录
-    if appdir_ratio >= SUBDIR_APP_RATIO_THRESHOLD || app_subdirs >= 1 {
-        return true;
+    const SUPPORT_PROCESS: &[&str] = &[
+        "service",
+        "helper",
+        "diagnostic",
+        "broker",
+        "integrator",
+        "monitor",
+        "worker",
+        "elevate",
+        "devcon",
+        "regdll",
+        "repair",
+        "agent",
+        "guard",
+        "host",
+        "test",
+        "grhlp",
+        "plugin",
+        "devtool",
+    ];
+    if SUPPORT_PROCESS.iter().any(|token| stem.contains(token)) {
+        return -100;
     }
 
-    false
+    0
 }
 
-/// 判断一个目录是否为分类目录
-///
-/// # 参数
-///
-/// - `dir` - 要检查的目录路径
-///
-/// # 返回值
-///
-/// 如果目录符合分类目录条件，返回 `true`；否则返回 `false`。
-fn is_category_dir(dir: &Path) -> bool {
-    // 根目录下有没有顶层 exe
-    let mut has_exe = false;
-
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.filter_map(Result::ok) {
-            let p = entry.path();
-            if p.is_file() {
-                if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
-                    let ext = ext.to_ascii_lowercase();
-                    if ext == "exe" {
-                        has_exe = true;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    // 分类目录不能有顶层 exe
-    if has_exe {
-        return false;
-    }
-
-    // 列出一级子目录
-    let sub_dirs: Vec<_> = match fs::read_dir(dir) {
-        Ok(rd) => rd
-            // 跳过读取出错的条目
-            .filter_map(Result::ok)
-            .filter_map(|e| {
-                // 跳过 file_type 出错的条目
-                match e.file_type() {
-                    Ok(ft) if ft.is_dir() => Some(e.path()),
-                    _ => None,
-                }
-            })
-            .collect(),
-        Err(_) => return false,
-    };
-
-    // 子目录中，至少有一个是真正的“应用子包”（单文件 或 绿色软件）
-    let mut has_app_subdir = false;
-    for sd in &sub_dirs {
-        if is_single_file_dir(sd, None) || contains_app_structure_lightweight(sd) {
-            has_app_subdir = true;
-            break;
-        } else {
-            // 子目录只要有一个不符合，就整目录不算分类容器
-            // return false;
-        }
-    }
-
-    has_app_subdir
-}
-
-/// 运行安装脚本
-///
-/// # 参数
-/// - `dir`: 路径
-/// - `scripts`: 自定义脚本规则
-/// - `install_parallel`: 是否并行运行
+/// Runs matching installation scripts from an analyzed application root.
 fn run_install_scripts(dir: &Path, scripts: Option<&[String]>, install_parallel: bool) {
     // max_depth(1): 只检查当前目录下的文件，不深入子目录
     for entry in WalkDir::new(dir).max_depth(1).into_iter().filter_entry({
