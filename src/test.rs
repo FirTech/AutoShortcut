@@ -1,7 +1,10 @@
-use super::*;
+use crate::config::{ConfigInfo, Lnk};
+use crate::selector::{automatic_executable_role_penalty, select_main_executable};
+use crate::workflow::auto_shortcut;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
+use walkdir::WalkDir;
 
 fn score_candidates(
     app_root: &Path,
@@ -9,7 +12,7 @@ fn score_candidates(
     config: Option<&ConfigInfo>,
     score_ratio: f32,
 ) -> Option<(PathBuf, PathBuf)> {
-    find_software_best_exe_from_candidates(app_root, candidates, config, score_ratio)
+    select_main_executable(app_root, candidates, config, score_ratio)
 }
 
 #[cfg(test)]
