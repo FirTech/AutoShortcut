@@ -1,28 +1,27 @@
 use aho_corasick::AhoCorasick;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
+use goblin::pe::PE;
 use goblin::pe::options::ParseOptions;
 use goblin::pe::subsystem::IMAGE_SUBSYSTEM_WINDOWS_GUI;
-use goblin::pe::PE;
 use memmap2::Mmap;
 use std::collections::HashMap;
-use std::ffi::{c_void, OsStr, OsString};
+use std::ffi::{OsStr, OsString, c_void};
 use std::fs::File;
 use std::io::ErrorKind;
 use std::option::Option;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::{env, ptr, slice};
-use windows::core::{Interface, BOOL, GUID, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, MAX_PATH};
 use windows::Win32::Storage::FileSystem::{
-    GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, VS_FIXEDFILEINFO,
+    GetFileVersionInfoSizeW, GetFileVersionInfoW, VS_FIXEDFILEINFO, VerQueryValueW,
 };
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, IPersistFile,
-    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+    CoTaskMemFree, CoUninitialize, IPersistFile,
 };
 use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
 use windows::Win32::System::SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO};
 use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentProcessId, IsWow64Process};
@@ -32,11 +31,12 @@ use windows::Win32::UI::Shell::{
     FOLDERID_PublicDesktop, FOLDERID_PublicDocuments, FOLDERID_PublicDownloads,
     FOLDERID_PublicMusic, FOLDERID_PublicPictures, FOLDERID_PublicVideos, FOLDERID_QuickLaunch,
     FOLDERID_SendTo, FOLDERID_StartMenu, FOLDERID_Startup, FOLDERID_System, FOLDERID_Videos,
-    FOLDERID_Windows, IShellLinkW, SHGetKnownFolderPath, ShellLink, KNOWN_FOLDER_FLAG,
+    FOLDERID_Windows, IShellLinkW, KNOWN_FOLDER_FLAG, SHGetKnownFolderPath, ShellLink,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     SW_SHOWMAXIMIZED, SW_SHOWMINNOACTIVE, SW_SHOWNORMAL,
 };
+use windows::core::{BOOL, GUID, HSTRING, Interface, PCWSTR, PWSTR};
 
 /// 创建快捷方式
 ///

@@ -1,5 +1,5 @@
 use crate::config::{ConfigInfo, Lnk};
-use crate::selector::{automatic_executable_role_penalty, select_main_executable};
+use crate::selector::{automatic_executable_role_penalty, select_main_executable_by_rules};
 use crate::workflow::auto_shortcut;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
@@ -12,7 +12,8 @@ fn score_candidates(
     config: Option<&ConfigInfo>,
     score_ratio: f32,
 ) -> Option<(PathBuf, PathBuf)> {
-    select_main_executable(app_root, candidates, config, score_ratio)
+    select_main_executable_by_rules(app_root, candidates, config, score_ratio)
+        .map(|result| (app_root.to_path_buf(), result.executable))
 }
 
 #[cfg(test)]

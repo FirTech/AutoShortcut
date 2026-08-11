@@ -108,7 +108,7 @@ fn process_app_root(analysis: &DirectoryAnalysis, context: &AutoExecutionContext
         context.config_info,
         context.score_ratio,
     );
-    let Some((app_root, executable)) = selected else {
+    let Some(selected) = selected else {
         if !context.list_mode {
             write_console(
                 ConsoleType::Warning,
@@ -118,14 +118,27 @@ fn process_app_root(analysis: &DirectoryAnalysis, context: &AutoExecutionContext
         return;
     };
 
+    if DEBUG.load(Ordering::Relaxed) {
+        write_console(
+            ConsoleType::Debug,
+            &format!(
+                "[Selector] {} => {:?}, probability={:?}, margin={:?}",
+                selected.executable.display(),
+                selected.source,
+                selected.model_probability,
+                selected.model_margin
+            ),
+        );
+    }
+
     if context.install_script {
         run_install_scripts(
-            &app_root,
+            &selected.app_root,
             context.config_info.map(|config| config.scripts.as_slice()),
             context.install_parallel,
         );
     }
-    process_program(&executable, context);
+    process_program(&selected.executable, context);
 }
 
 fn process_program(program_path: &Path, context: &AutoExecutionContext<'_>) {

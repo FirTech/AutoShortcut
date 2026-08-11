@@ -8,7 +8,10 @@ mod config;
 mod console;
 mod directory;
 mod execution;
+mod feature_export;
+mod features;
 mod installer;
+mod model;
 mod selector;
 mod shortcut;
 mod template;
@@ -55,6 +58,33 @@ fn main() -> Result<()> {
     let cli = crate::cli::Cli::parse();
     if cli.debug {
         DEBUG.store(true, Ordering::Relaxed);
+    }
+
+    if let Some(output) = cli.export_features.as_deref() {
+        let target = cli
+            .targetPath
+            .as_deref()
+            .expect("clap requires targetPath for --export-features");
+        let config_info = cli
+            .config
+            .as_deref()
+            .map(crate::config::ConfigInfo::parse_config_file)
+            .transpose()?;
+        let excluded =
+            crate::workflow::analysis_exclusions(cli.config.as_deref(), config_info.as_ref());
+        let score_ratio = config_info
+            .as_ref()
+            .and_then(|config| config.score_ratio)
+            .unwrap_or(cli.score_ratio);
+        crate::feature_export::export_features(
+            target,
+            output,
+            &excluded,
+            config_info.as_ref(),
+            score_ratio,
+        )?;
+        println!("{}", output.display());
+        return Ok(());
     }
 
     // 配置文件模式

@@ -94,23 +94,7 @@ pub fn auto_shortcut(
         }
     }
 
-    const SYSTEM_EXCLUDED_DIRS: &[&str] = &[
-        "$RECYCLE.BIN",
-        "System Volume Information",
-        "Recovery",
-        "Config.Msi",
-        "MSOCache",
-    ];
-    let mut excluded = SYSTEM_EXCLUDED_DIRS
-        .iter()
-        .map(|value| format!("={value}"))
-        .collect::<Vec<_>>();
-    if let Some(config_path) = config_path {
-        excluded.push(config_path.to_string_lossy().to_string());
-    }
-    if let Some(config) = &config_info {
-        excluded.extend(config.ignore.iter().cloned());
-    }
+    let excluded = analysis_exclusions(config_path, config_info.as_ref());
 
     let analysis = analyze_directory_tree(target_path, &excluded);
     let context = AutoExecutionContext {
@@ -127,6 +111,30 @@ pub fn auto_shortcut(
     };
     execute_directory(&analysis, &context);
     Ok(())
+}
+
+pub(crate) fn analysis_exclusions(
+    config_path: Option<&Path>,
+    config_info: Option<&ConfigInfo>,
+) -> Vec<String> {
+    const SYSTEM_EXCLUDED_DIRS: &[&str] = &[
+        "$RECYCLE.BIN",
+        "System Volume Information",
+        "Recovery",
+        "Config.Msi",
+        "MSOCache",
+    ];
+    let mut excluded = SYSTEM_EXCLUDED_DIRS
+        .iter()
+        .map(|value| format!("={value}"))
+        .collect::<Vec<_>>();
+    if let Some(config_path) = config_path {
+        excluded.push(config_path.to_string_lossy().to_string());
+    }
+    if let Some(config) = config_info {
+        excluded.extend(config.ignore.iter().cloned());
+    }
+    excluded
 }
 
 /// Creates shortcuts exclusively from explicit configuration entries.

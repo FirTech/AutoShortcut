@@ -958,7 +958,10 @@ pub fn render_template<C>(template: &str, context: &C) -> Result<String, String>
 where
     C: Serialize,
 {
-    shared_template_engine().lock().unwrap().render(template, context)
+    shared_template_engine()
+        .lock()
+        .unwrap()
+        .render(template, context)
 }
 
 #[cfg(test)]
@@ -1113,5 +1116,4 @@ mod tests {
         assert_eq!(result, "Hello, Bob!");
         assert_eq!(engine.cache.len(), 1);
     }
-
 }

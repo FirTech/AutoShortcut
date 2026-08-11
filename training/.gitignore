@@ -1,0 +1,4 @@
+# Python training environment and caches
+/.venv/
+/__pycache__/
+/**/__pycache__/

@@ -1,6 +1,6 @@
-use crate::console::{write_console, ConsoleType};
-use crate::utils::process_env;
 use crate::DEBUG;
+use crate::console::{ConsoleType, write_console};
+use crate::utils::process_env;
 use anyhow::Result;
 use rust_i18n::t;
 use serde::{Deserialize, Serialize};

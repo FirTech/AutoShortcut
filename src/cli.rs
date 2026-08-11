@@ -15,7 +15,7 @@ pub struct Cli {
 
     /// 快捷方式路径
     #[clap(help = "Shortcut Path")]
-    #[clap(value_parser = exist_dir_parser, required_unless_present_any = &["config", "list", "start"]
+    #[clap(value_parser = exist_dir_parser, required_unless_present_any = &["config", "list", "start", "export_features"]
     )]
     pub lnkPath: Option<PathBuf>,
 
@@ -70,6 +70,16 @@ pub struct Cli {
         help = "Ratio (0.0~1.0) of max possible score to use as threshold"
     )]
     pub score_ratio: f32,
+
+    /// 导出主程序候选特征用于人工标注和模型训练
+    #[arg(
+        long = "export-features",
+        value_name = "CSV",
+        requires = "targetPath",
+        conflicts_with_all = ["lnkPath", "only_match", "install", "install_parallel", "list", "start"],
+        help = "Export AppRoot executable features to CSV"
+    )]
+    pub export_features: Option<PathBuf>,
 
     /// 调试模式
     #[clap(help = "Debug model")]
