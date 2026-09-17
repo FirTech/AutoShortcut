@@ -8,7 +8,7 @@ use anyhow::{Result, anyhow};
 use rust_i18n::t;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// 自动创建快捷方式
 ///
@@ -193,6 +193,10 @@ pub(crate) fn config_shortcut(
             Command::new(&lnk.exec)
                 .creation_flags(0x08000000)
                 .current_dir(Path::new(&lnk.exec).parent().unwrap())
+                // Do not let a long-running child retain redirected console log handles.
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
                 .spawn()
                 .ok();
         }
