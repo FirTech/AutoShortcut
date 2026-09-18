@@ -67,6 +67,7 @@ pub struct Cli {
         short = 'r',
         long,
         default_value = "0.3",
+        value_parser = score_ratio_parser,
         help = "Ratio (0.0~1.0) of max possible score to use as threshold"
     )]
     pub score_ratio: f32,
@@ -148,5 +149,29 @@ fn normalize_drive_root(s: &str) -> String {
         format!("{}\\", s)
     } else {
         s.to_string()
+    }
+}
+
+fn score_ratio_parser(s: &str) -> Result<f32, String> {
+    let ratio = s
+        .parse::<f32>()
+        .map_err(|_| "score ratio must be a number between 0 and 1".to_string())?;
+    if ratio.is_finite() && (0.0..=1.0).contains(&ratio) {
+        Ok(ratio)
+    } else {
+        Err("score ratio must be a finite number between 0 and 1".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::score_ratio_parser;
+
+    #[test]
+    fn score_ratio_parser_rejects_values_outside_supported_range() {
+        assert!(score_ratio_parser("-0.1").is_err());
+        assert!(score_ratio_parser("1.1").is_err());
+        assert!(score_ratio_parser("NaN").is_err());
+        assert_eq!(score_ratio_parser("0.3").unwrap(), 0.3);
     }
 }

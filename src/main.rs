@@ -74,7 +74,11 @@ fn main() -> Result<()> {
             crate::workflow::analysis_exclusions(cli.config.as_deref(), config_info.as_ref());
         let score_ratio = config_info
             .as_ref()
-            .and_then(|config| config.score_ratio)
+            .and_then(|config| {
+                config
+                    .score_ratio
+                    .filter(|ratio| ratio.is_finite() && (0.0..=1.0).contains(ratio))
+            })
             .unwrap_or(cli.score_ratio);
         crate::feature_export::export_features(
             target,

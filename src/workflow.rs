@@ -54,7 +54,10 @@ pub fn auto_shortcut(
                 install_script |= config.install;
                 install_parallel |= config.install_parallel;
 
-                if config.score_ratio.is_some_and(|ratio| ratio > 1.0) {
+                if config
+                    .score_ratio
+                    .is_some_and(|ratio| !ratio.is_finite() || !(0.0..=1.0).contains(&ratio))
+                {
                     write_console(
                         ConsoleType::Warning,
                         &t!(
