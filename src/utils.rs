@@ -389,8 +389,16 @@ pub fn process_env(content: String, config_path: Option<&Path>) -> String {
         );
         // 配置文件名称
         vars.insert("CurFile".into(), path.to_string_lossy().to_string());
-        // 配置文件驱动器
-        vars.insert("CurDrv".into(), path.to_string_lossy()[..2].to_string());
+        // 配置文件驱动器。相对路径可能没有盘符（例如当前目录下的 `a`），
+        // 因此不能直接切片前两个字节。
+        let path_string = path.to_string_lossy();
+        let drive = path_string
+            .as_bytes()
+            .get(1)
+            .filter(|&&byte| byte == b':')
+            .map(|_| path_string[..2].to_string())
+            .unwrap_or_default();
+        vars.insert("CurDrv".into(), drive);
     }
 
     // 程序目录(64位)
@@ -1511,4 +1519,16 @@ fn is_date_like(tok: &str) -> bool {
         .filter(|c| c.is_ascii_digit())
         .collect::<String>();
     (s.len() >= 6 && s.len() <= 8) && s.len() == tok.chars().filter(|c| c.is_ascii_digit()).count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::process_env;
+    use std::path::Path;
+
+    #[test]
+    fn process_env_accepts_relative_config_paths_without_a_drive() {
+        let rendered = process_env("%CurDrv%/file".to_string(), Some(Path::new("a")));
+        assert_eq!(rendered, "/file");
+    }
 }
