@@ -1089,8 +1089,11 @@ pub fn is_gui_program(program: impl AsRef<Path>) -> Result<bool> {
     options.parse_attribute_certificates = false;
     options.parse_tls_data = false;
     if let Ok(pe) = PE::parse_with_opts(&mmap, &options) {
-        return Ok(pe.header.optional_header.unwrap().windows_fields.subsystem
-            == IMAGE_SUBSYSTEM_WINDOWS_GUI);
+        let optional_header = pe
+            .header
+            .optional_header
+            .ok_or_else(|| anyhow!("PE file has no optional header"))?;
+        return Ok(optional_header.windows_fields.subsystem == IMAGE_SUBSYSTEM_WINDOWS_GUI);
     }
 
     // 解析基本头部
