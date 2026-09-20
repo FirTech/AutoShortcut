@@ -429,7 +429,7 @@ fn paths_equal(left: &Path, right: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Confidence, DirectoryEvidence, DirectoryRole, analyze_directory_tree};
+    use super::{analyze_directory_tree, Confidence, DirectoryEvidence, DirectoryRole};
     use std::fs::{self, File};
     use std::path::Path;
     use tempfile::TempDir;
@@ -451,11 +451,9 @@ mod tests {
         assert_eq!(analysis.role, DirectoryRole::ExeCollection);
         assert_eq!(analysis.confidence, Confidence::High);
         assert_eq!(analysis.direct_exes.len(), 2);
-        assert!(
-            analysis
-                .evidence
-                .contains(&DirectoryEvidence::DocumentationOnly)
-        );
+        assert!(analysis
+            .evidence
+            .contains(&DirectoryEvidence::DocumentationOnly));
     }
 
     #[test]
@@ -599,12 +597,10 @@ mod tests {
 
         assert_eq!(analysis.role, DirectoryRole::AppRoot);
         assert_eq!(analysis.owned_exes.len(), 3);
-        assert!(
-            analysis
-                .owned_exes
-                .iter()
-                .all(|path| path.parent() == Some(app.as_path()))
-        );
+        assert!(analysis
+            .owned_exes
+            .iter()
+            .all(|path| path.parent() == Some(app.as_path())));
     }
 
     #[test]

@@ -92,6 +92,15 @@ pub struct Cli {
     #[clap(short, long)]
     pub start: bool,
 
+    /// 日志文件路径
+    #[clap(
+        long,
+        value_name = "FILE",
+        value_parser = log_file_parser,
+        help = "Log file path"
+    )]
+    pub log_file: Option<PathBuf>,
+
     /// 版本信息
     #[arg(short = 'v',long = "version",action = ArgAction::Version,help = "Print version")]
     version: Option<bool>,
@@ -143,6 +152,15 @@ fn exist_dir_parser(s: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// 用于 clap 参数解析：展开日志路径中的环境变量，并拒绝目录路径。
+fn log_file_parser(s: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(process_env(normalize_drive_root(s), None));
+    if path.exists() && path.is_dir() {
+        return Err(format!("Log file path is a directory: {}", path.display()));
+    }
+    Ok(path)
+}
+
 /// 如果 s 是 “X:”（只有盘符），就返回 “X:\”；否则原样返回
 fn normalize_drive_root(s: &str) -> String {
     if s.len() == 2 && s.as_bytes()[1] == b':' && s.as_bytes()[0].is_ascii_alphabetic() {
@@ -165,7 +183,9 @@ fn score_ratio_parser(s: &str) -> Result<f32, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::score_ratio_parser;
+    use super::{score_ratio_parser, Cli};
+    use clap::Parser;
+    use std::path::PathBuf;
 
     #[test]
     fn score_ratio_parser_rejects_values_outside_supported_range() {
@@ -173,5 +193,13 @@ mod tests {
         assert!(score_ratio_parser("1.1").is_err());
         assert!(score_ratio_parser("NaN").is_err());
         assert_eq!(score_ratio_parser("0.3").unwrap(), 0.3);
+    }
+
+    #[test]
+    fn log_file_option_does_not_conflict_with_list_short_option() {
+        let cli = Cli::try_parse_from(["AutoShortcut", ".", "-l", "--log-file", "run.log"])
+            .expect("log-file and list options should parse together");
+        assert!(cli.list);
+        assert_eq!(cli.log_file, Some(PathBuf::from("run.log")));
     }
 }

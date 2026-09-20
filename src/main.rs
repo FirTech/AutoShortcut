@@ -56,6 +56,7 @@ fn main() -> Result<()> {
 
     // 处理命令行
     let cli = crate::cli::Cli::parse();
+    crate::console::init_log_file(cli.log_file.as_deref())?;
     if cli.debug {
         DEBUG.store(true, Ordering::Relaxed);
     }
@@ -87,7 +88,7 @@ fn main() -> Result<()> {
             config_info.as_ref(),
             score_ratio,
         )?;
-        println!("{}", output.display());
+        crate::console::write_plain(&output.display().to_string());
         return Ok(());
     }
 

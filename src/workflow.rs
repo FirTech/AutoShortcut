@@ -1,14 +1,14 @@
 use crate::config::ConfigInfo;
-use crate::console::{ConsoleType, write_console};
+use crate::console::{write_console, ConsoleType};
 use crate::directory::analyze_directory_tree;
-use crate::execution::{AutoExecutionContext, execute_directory};
+use crate::execution::{execute_directory, AutoExecutionContext};
 use crate::shortcut::create_program_shortcut;
 use crate::utils::validate_shortcut_name_for_config;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use rust_i18n::t;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 /// 自动创建快捷方式
 ///
@@ -196,10 +196,6 @@ pub(crate) fn config_shortcut(
             Command::new(&lnk.exec)
                 .creation_flags(0x08000000)
                 .current_dir(Path::new(&lnk.exec).parent().unwrap())
-                // Do not let a long-running child retain redirected console log handles.
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
                 .spawn()
                 .ok();
         }

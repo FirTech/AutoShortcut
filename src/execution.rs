@@ -1,14 +1,14 @@
-use crate::DEBUG;
 use crate::config::{ConfigInfo, Lnk};
-use crate::console::{ConsoleType, write_console};
-use crate::directory::{DirectoryAnalysis, DirectoryRole, is_component_directory};
+use crate::console::{write_console, write_plain, ConsoleType};
+use crate::directory::{is_component_directory, DirectoryAnalysis, DirectoryRole};
 use crate::installer::run_install_scripts;
 use crate::selector::select_main_executable;
 use crate::shortcut::create_program_shortcut;
+use crate::DEBUG;
 use rust_i18n::t;
 use std::os::windows::process::CommandExt;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::atomic::Ordering;
 
 /// Runtime options shared by recursive directory execution.
@@ -143,7 +143,7 @@ fn process_app_root(analysis: &DirectoryAnalysis, context: &AutoExecutionContext
 
 fn process_program(program_path: &Path, context: &AutoExecutionContext<'_>) {
     if context.list_mode {
-        println!("{}", program_path.display());
+        write_plain(&program_path.display().to_string());
     }
 
     if context.start {
@@ -155,10 +155,6 @@ fn process_program(program_path: &Path, context: &AutoExecutionContext<'_>) {
             Command::new(program_path)
                 .creation_flags(0x08000000)
                 .current_dir(parent)
-                // Do not let a long-running child retain redirected console log handles.
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
                 .spawn()
                 .ok();
         }

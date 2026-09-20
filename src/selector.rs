@@ -1,8 +1,8 @@
-use crate::DEBUG;
 use crate::config::ConfigInfo;
-use crate::console::{ConsoleType, write_console};
-use crate::features::{ExecutableFeatures, extract_candidate_features};
+use crate::console::{write_console, ConsoleType};
+use crate::features::{extract_candidate_features, ExecutableFeatures};
 use crate::model;
+use crate::DEBUG;
 use rust_i18n::t;
 use std::cmp::Ordering as CmpOrdering;
 use std::path::{Path, PathBuf};
@@ -439,7 +439,7 @@ pub(crate) fn automatic_executable_role_penalty(file_path: &Path) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{SelectionSource, select_main_executable_with_predictor};
+    use super::{select_main_executable_with_predictor, SelectionSource};
     use crate::config::{ConfigInfo, Lnk};
     use std::fs::File;
     use tempfile::TempDir;

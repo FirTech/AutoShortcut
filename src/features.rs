@@ -315,8 +315,8 @@ fn architecture_compatibility(program_arch: u16, system_arch: u16) -> (bool, boo
 #[cfg(test)]
 mod tests {
     use super::{
-        ExecutableFeatures, FEATURE_COUNT, FEATURE_NAMES, architecture_compatibility,
-        extract_candidate_features,
+        architecture_compatibility, extract_candidate_features, ExecutableFeatures, FEATURE_COUNT,
+        FEATURE_NAMES,
     };
     use std::fs::File;
     use tempfile::TempDir;

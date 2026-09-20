@@ -1,10 +1,10 @@
 use crate::config::ConfigInfo;
-use crate::directory::{DirectoryAnalysis, DirectoryRole, analyze_directory_tree};
+use crate::directory::{analyze_directory_tree, DirectoryAnalysis, DirectoryRole};
 use crate::features::{
-    FEATURE_NAMES, FEATURE_SCHEMA_VERSION, extract_candidate_features, metadata_values,
+    extract_candidate_features, metadata_values, FEATURE_NAMES, FEATURE_SCHEMA_VERSION,
 };
 use crate::selector::rule_candidate_diagnostics_from_features;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use csv::Writer;
 use std::collections::HashMap;
 use std::fs::OpenOptions;

@@ -1,4 +1,4 @@
-use crate::console::{ConsoleType, write_console};
+use crate::console::{write_console, ConsoleType};
 use crate::utils::matches_glob;
 use rust_i18n::t;
 use std::os::windows::process::CommandExt;

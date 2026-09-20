@@ -1,11 +1,11 @@
-use crate::config::{DEFAULT_NAME_TEMPLATE, Lnk, Template};
-use crate::console::{ConsoleType, write_console};
+use crate::config::{Lnk, Template, DEFAULT_NAME_TEMPLATE};
+use crate::console::{write_console, ConsoleType};
 use crate::template::process_template;
 use crate::utils::{
     create_shortcut, get_shortcut_target, is_running_under_wow64, parse_hotkey, parse_icon_spec,
     replace_ignore_case, resolve_relative_path, validate_shortcut_name_for_config,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use rust_i18n::t;
 use std::fs::create_dir_all;
 use std::path::{Path, PathBuf};
